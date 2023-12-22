@@ -1,12 +1,17 @@
+import logging
+from pathlib import Path
+
 import napari
 from magicgui.widgets import (
-    CheckBox,
     ComboBox,
     Container,
     FileEdit,
     PushButton,
     Select,
 )
+from napari.qt.threading import thread_worker
+
+from napari_ome_zarr_navigator.utils_roi_loader import get_metadata
 
 
 class ROILoader(Container):
@@ -28,16 +33,13 @@ class ROILoader(Container):
         self._feature_picker = Select(
             label="Features",
         )
-        self._reset_origin = CheckBox(
-            label="Reset ROI Origin",
-        )
         self._run_button = PushButton(value=False, text="Load ROI")
 
         # Initialize possible choices
         self.update_roi_selection()
 
         # Update selections & bind buttons
-        self._zarr_url_picker.changed.connect(self.update_roi_tables)
+        self._zarr_url_picker.changed.connect(self.update_roi_table_choices)
         self._run_button.clicked.connect(self.run)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
 
@@ -53,7 +55,6 @@ class ROILoader(Container):
                 self._level_picker,
                 self._label_picker,
                 self._feature_picker,
-                self._reset_origin,
                 self._run_button,
             ]
         )
@@ -61,8 +62,69 @@ class ROILoader(Container):
     def update_roi_selection(self):
         print("update_roi_selection")
 
-    def update_roi_tables(self):
-        print("update_roi_tables")
+    def update_roi_table_choices(self):
+        worker = self._get_table_choices(type="ROIs")
+        worker.returned.connect(self.apply_roi_table_choices_update)
+        worker.start()
+
+    def apply_roi_table_choices_update(self, table_list):
+        """
+        Update the list of available ROI tables in the dropdown menu
+        """
+        self._roi_table_picker.choices = table_list
+        self._roi_table_picker._default_choices = table_list
+        # Update the list of options that depend on the ROI table selection
+        self.update_roi_selection()
+
+    @thread_worker
+    def _get_table_choices(self, table_type):
+        """
+        Find table choices in the zarr file that match the table_type
+
+        If tables without table_type are present, return all tables
+
+        Params:
+            table_type (str): The type of table to look for. Special handling for
+                "ROIs" => matches both "roi_table" & "masking_roi_table".
+        """
+        table_folder = Path(self._zarr_url_picker.value) / "tables"
+        if not table_folder.exists():
+            return []
+        table_meta_dict = get_metadata(table_folder)
+        table_list = []
+        try:
+            for table_name in table_meta_dict["tables"]:
+                table_attrs = get_metadata(table_folder / table_name)
+                if table_type == "ROIs":
+                    roi_table_types = ["roi_table", "masking_roi_table"]
+                    if table_attrs["type"] in roi_table_types:
+                        table_list.append(table_name)
+                elif table_attrs["type"] == table_type:
+                    table_list.append(table_name)
+        except KeyError:
+            # If there are tables without types, let the users choose from all
+            # tables
+            logging.warning(
+                "Some tables do not have a type attribute. Could not "
+                "constrain table choices."
+            )
+            return table_meta_dict["tables"]
+        return table_list
+
+        # print("_get_table_choices")
+        # time.sleep(5)
+        # table_list = ["table1", "table2", "table3"]
+        # return table_list
+        # TODO: Once we have relevant metadata, allow this function to only
+        # load ROI tables or only feature tables => type features or ROIs
+        # self.label_dict = get_feature_dict(
+        #     Path(self._zarr_url_picker.value) / "tables"
+        # )
+        # potential_tables = list(self.label_dict.values())
+        # if type == "ROIs":
+        #     return [table for table in potential_tables if "ROI" in table]
+        # else:
+        #     return [table for table in potential_tables if "ROI" not in table]
 
     def run(self):
         print("run")
@@ -73,7 +135,6 @@ class ROILoader(Container):
     #     level = self._level_picker.value
     #     channels = self._channel_picker.value
     #     labels = self._label_picker.value
-    #     reset_origin = self._reset_origin.value
     #     if len(channels) < 1 and len(labels) < 1:
     #         show_info(
     #             "No channel or labels selected. "
@@ -90,9 +151,7 @@ class ROILoader(Container):
     #             roi_of_interest=roi_name,
     #             channel_index=self.channel_names_dict[channel],
     #             level=level,
-    #             roi_table=roi_table,
-    #             reset_origin=reset_origin,
-    #         )
+    #             roi_table=roi_table,    #         )
     #         if not np.any(img_roi):
     #             show_info(
     #                 "Could not load this ROI. Did you correctly set the "
@@ -132,7 +191,6 @@ class ROILoader(Container):
     #             label_name=label,
     #             target_scale=scale_img,
     #             roi_table=roi_table,
-    #             reset_origin=reset_origin,
     #         )
     #         if not np.any(label_roi):
     #             show_info(
@@ -249,12 +307,6 @@ class ROILoader(Container):
     #     features = self._get_table_choices(type="features")
     #     self._feature_picker.choices = features
     #     self._feature_picker._default_choices = features
-
-    #     # Heuristic to set the origin reset
-    #     if self._roi_table_picker.value in ["FOV_ROI_table", "well_ROI_table"]:
-    #         self._reset_origin.value = True
-    #     else:
-    #         self._reset_origin.value = False
 
     # def _get_roi_choices(self):
     #     if not self._roi_table_picker.value:
