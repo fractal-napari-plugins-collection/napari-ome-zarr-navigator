@@ -1,0 +1,238 @@
+{
+  "name": "navigator_test_dataset_creation",
+  "task_list": [
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 8000
+      },
+      "args": {
+        "num_levels": 5,
+        "coarsening_xy": 2,
+        "image_extension": "png",
+        "overwrite": true,
+        "allowed_channels": [
+          {
+            "wavelength_id": "A01_C01",
+            "colormap": "FFFF00",
+            "end": 800,
+            "label": "DAPI",
+            "start": 110,
+            "window": {
+              "start": 110,
+              "end": 800
+            },
+            "color": "00FFFF",
+            "active": true,
+            "coefficient": 1,
+            "inverted": false
+          },
+          {
+            "wavelength_id": "A01_C02",
+            "colormap": "FF00FF",
+            "end": 300,
+            "label": "nanog",
+            "start": 110,
+            "active": true,
+            "coefficient": 1,
+            "inverted": false,
+            "window": {
+              "start": 110,
+              "end": 250
+            },
+            "color": "FF00FF"
+          },
+          {
+            "wavelength_id": "A02_C03",
+            "colormap": "00FFFF",
+            "end": 1500,
+            "label": "Lamin B1",
+            "start": 110,
+            "active": true,
+            "coefficient": 1,
+            "inverted": false,
+            "window": {
+              "start": 110,
+              "end": 800
+            },
+            "color": "FFFF00"
+          }
+        ],
+        "image_glob_patterns": [
+          "*F00[12]*",
+          "*_B0[35]_*",
+          "*Z0[3-6]C*"
+        ]
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::create_ome-zarr_structure"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 8000,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "overwrite": false
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::convert_yokogawa_to_ome-zarr"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 4,
+        "mem": 16000,
+        "needs_gpu": true,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "input_ROI_table": "FOV_ROI_table",
+        "use_masks": true,
+        "relabeling": true,
+        "diameter_level0": 60,
+        "model_type": "nuclei",
+        "cellprob_threshold": 0,
+        "flow_threshold": 0.4,
+        "min_size": 15,
+        "augment": false,
+        "net_avg": false,
+        "use_gpu": true,
+        "overwrite": true,
+        "channel": {
+          "wavelength_id": "A01_C01"
+        },
+        "level": 2,
+        "output_label_name": "nuclei"
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::cellpose_segmentation"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 8000,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "input_ROI_table": "FOV_ROI_table",
+        "level": 0,
+        "label_level": 0,
+        "measure_morphology": true,
+        "allow_duplicate_labels": false,
+        "overwrite": true,
+        "label_image": "nuclei",
+        "output_table_name": "measurements",
+        "input_channels": {
+          "DAPI": {
+            "wavelength_id": "A01_C01"
+          },
+          "nanog": {
+            "wavelength_id": "A01_C02"
+          },
+          "LaminB1": {
+            "wavelength_id": "A02_C03"
+          }
+        }
+      },
+      "task": {
+        "source": "pip_local:scmultiplex:0.5.0:fractal-tasks::scmultiplex_measurements"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 1000
+      },
+      "args": {
+        "project_to_2D": true,
+        "suffix": "mip",
+        "ROI_table_names": [
+          "FOV_ROI_table",
+          "well_ROI_table"
+        ],
+        "overwrite": true
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::copy_ome-zarr_structure"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 8000,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "overwrite": false
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::maximum_intensity_projection"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 4,
+        "mem": 16000,
+        "needs_gpu": true,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "input_ROI_table": "FOV_ROI_table",
+        "use_masks": true,
+        "relabeling": true,
+        "diameter_level0": 60,
+        "model_type": "nuclei",
+        "cellprob_threshold": 0,
+        "flow_threshold": 0.4,
+        "min_size": 15,
+        "augment": false,
+        "net_avg": false,
+        "use_gpu": true,
+        "overwrite": true,
+        "channel": {
+          "wavelength_id": "A01_C01"
+        },
+        "level": 2,
+        "output_label_name": "nuclei"
+      },
+      "task": {
+        "source": "pip_remote:fractal_tasks_core:0.14.0:fractal-tasks::cellpose_segmentation"
+      }
+    },
+    {
+      "meta": {
+        "cpus_per_task": 1,
+        "mem": 8000,
+        "parallelization_level": "image"
+      },
+      "args": {
+        "input_ROI_table": "FOV_ROI_table",
+        "level": 0,
+        "label_level": 0,
+        "measure_morphology": true,
+        "allow_duplicate_labels": false,
+        "overwrite": true,
+        "label_image": "nuclei",
+        "output_table_name": "measurements",
+        "input_channels": {
+          "DAPI": {
+            "wavelength_id": "A01_C01"
+          },
+          "nanog": {
+            "wavelength_id": "A01_C02"
+          },
+          "LaminB1": {
+            "wavelength_id": "A02_C03"
+          }
+        }
+      },
+      "task": {
+        "source": "pip_local:scmultiplex:0.5.0:fractal-tasks::scmultiplex_measurements"
+      }
+    }
+  ]
+}

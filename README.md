@@ -34,6 +34,11 @@ To install latest development version :
     pip install git+https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator.git
 
 
+## Test data
+
+Test data is available at https://zenodo.org/records/10424292
+
+
 ## Contributing
 
 Contributions are very welcome. Tests can be run with [tox], please ensure
