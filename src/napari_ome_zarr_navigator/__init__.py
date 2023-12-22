@@ -12,7 +12,7 @@ from .roi_loader import (
 )
 
 __all__ = ("ROILoader", "ImgBrowser")
-__file__ = Path(__file__).resolve()
+__file__ = Path(__file__)
 _PACKAGE_DIR = __file__.parents[2]
 _MODULE_DIR = __file__.parent
 _TEST_DIR = _MODULE_DIR.joinpath("_tests")
