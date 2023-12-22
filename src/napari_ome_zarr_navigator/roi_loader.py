@@ -1,6 +1,3 @@
-import logging
-from pathlib import Path
-
 import napari
 from magicgui.widgets import (
     ComboBox,
@@ -9,9 +6,8 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from napari.qt.threading import thread_worker
 
-from napari_ome_zarr_navigator.utils_roi_loader import get_metadata
+from napari_ome_zarr_navigator.utils_roi_loader import threaded_get_table_list
 
 
 class ROILoader(Container):
@@ -63,7 +59,11 @@ class ROILoader(Container):
         print("update_roi_selection")
 
     def update_roi_table_choices(self):
-        worker = self._get_table_choices(type="ROIs")
+        worker = threaded_get_table_list(
+            zarr_url=self._zarr_url_picker.value,
+            table_type="ROIs",
+            strict=False,
+        )
         worker.returned.connect(self.apply_roi_table_choices_update)
         worker.start()
 
@@ -75,56 +75,6 @@ class ROILoader(Container):
         self._roi_table_picker._default_choices = table_list
         # Update the list of options that depend on the ROI table selection
         self.update_roi_selection()
-
-    @thread_worker
-    def _get_table_choices(self, table_type):
-        """
-        Find table choices in the zarr file that match the table_type
-
-        If tables without table_type are present, return all tables
-
-        Params:
-            table_type (str): The type of table to look for. Special handling for
-                "ROIs" => matches both "roi_table" & "masking_roi_table".
-        """
-        table_folder = Path(self._zarr_url_picker.value) / "tables"
-        if not table_folder.exists():
-            return []
-        table_meta_dict = get_metadata(table_folder)
-        table_list = []
-        try:
-            for table_name in table_meta_dict["tables"]:
-                table_attrs = get_metadata(table_folder / table_name)
-                if table_type == "ROIs":
-                    roi_table_types = ["roi_table", "masking_roi_table"]
-                    if table_attrs["type"] in roi_table_types:
-                        table_list.append(table_name)
-                elif table_attrs["type"] == table_type:
-                    table_list.append(table_name)
-        except KeyError:
-            # If there are tables without types, let the users choose from all
-            # tables
-            logging.warning(
-                "Some tables do not have a type attribute. Could not "
-                "constrain table choices."
-            )
-            return table_meta_dict["tables"]
-        return table_list
-
-        # print("_get_table_choices")
-        # time.sleep(5)
-        # table_list = ["table1", "table2", "table3"]
-        # return table_list
-        # TODO: Once we have relevant metadata, allow this function to only
-        # load ROI tables or only feature tables => type features or ROIs
-        # self.label_dict = get_feature_dict(
-        #     Path(self._zarr_url_picker.value) / "tables"
-        # )
-        # potential_tables = list(self.label_dict.values())
-        # if type == "ROIs":
-        #     return [table for table in potential_tables if "ROI" in table]
-        # else:
-        #     return [table for table in potential_tables if "ROI" not in table]
 
     def run(self):
         print("run")
