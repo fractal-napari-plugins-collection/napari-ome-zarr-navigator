@@ -3,32 +3,21 @@ display_name: napari OME-Zarr Navigator
 # use 'hidden' to remove plugin from napari hub search results
 visibility: public
 # see https://napari.org/stable/plugins/manifest.html for valid categories
-categories: ["Annotation", "Segmentation", "Acquisition"]
+categories: ["Dataset", "Visualization"]
 contributions:
   commands:
-    - id: napari-ome-zarr-navigator.make_sample_data
-      python_name: napari_ome_zarr_navigator._sample_data:make_sample_data
-      title: Load sample data from napari OME-Zarr Navigator
-    - id: napari-ome-zarr-navigator.make_container_widget
-      python_name: napari_ome_zarr_navigator:ImageThreshold
-      title: Make threshold Container widget
-    - id: napari-ome-zarr-navigator.make_magic_widget
-      python_name: napari_ome_zarr_navigator:threshold_magic_widget
-      title: Make threshold magic widget
-    - id: napari-ome-zarr-navigator.make_function_widget
-      python_name: napari_ome_zarr_navigator:threshold_autogenerate_widget
-      title: Make threshold function widget
+    - id: napari-ome-zarr-navigator.make_img_browser
+      python_name: napari_ome_zarr_navigator:ImgBrowser
+      title: Image Browser
+    - id: napari-ome-zarr-navigator.make_roi_loader
+      python_name: napari_ome_zarr_navigator:ROILoader
+      title: ROI Loader
   sample_data:
     - command: napari-ome-zarr-navigator.make_sample_data
       display_name: napari OME-Zarr Navigator
       key: unique_id.1
   widgets:
-    - command: napari-ome-zarr-navigator.make_container_widget
-      display_name: Container Threshold
-    - command: napari-ome-zarr-navigator.make_magic_widget
-      display_name: Magic Threshold
-    - command: napari-ome-zarr-navigator.make_function_widget
-      autogenerate: true
-      display_name: Autogenerate Threshold
-    - command: napari-ome-zarr-navigator.make_qwidget
-      display_name: Example QWidget
+    - command: napari-ome-zarr-navigator.make_img_browser
+      display_name: Image Browser
+    - command: napari-ome-zarr-navigator.make_roi_loader
+      display_name: ROI Loader

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 # if we want even more control over our widget, we can use
 # magicgui `Container`
-class ImageThreshold(Container):
+class ROILoader(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
