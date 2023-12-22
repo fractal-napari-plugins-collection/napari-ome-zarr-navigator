@@ -40,7 +40,7 @@ def download_from_zenodo(
     )
     doi_path = Path(directory)
     try:
-        doi_path.mkdir(exist_ok=overwrite)
+        doi_path.mkdir(exist_ok=overwrite, parents=True)
     except FileExistsError:
         print(f"{doi_path} exists. Don't overwrite.")
         return
