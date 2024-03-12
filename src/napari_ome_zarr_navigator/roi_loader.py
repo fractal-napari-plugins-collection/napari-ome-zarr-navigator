@@ -1,4 +1,5 @@
 import napari
+import zarr
 from magicgui.widgets import (
     ComboBox,
     Container,
@@ -6,8 +7,12 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
+from napari.qt.threading import thread_worker
 
-from napari_ome_zarr_navigator.utils_roi_loader import threaded_get_table_list
+from napari_ome_zarr_navigator.utils_roi_loader import (
+    read_table,
+    threaded_get_table_list,
+)
 
 
 class ROILoader(Container):
@@ -55,8 +60,33 @@ class ROILoader(Container):
             ]
         )
 
+    @thread_worker
+    def _get_roi_choices(self):
+        if not self._roi_table_picker.value:
+            # When no roi table is provided.
+            # E.g. during bug with self._roi_table_picker reset
+            return [""]
+        try:
+            roi_table = read_table(
+                self._zarr_url_picker.value, self._roi_table_picker.value
+            )
+            new_choices = list(roi_table.obs_names)
+            return new_choices
+        except zarr.errors.PathNotFoundError:
+            new_choices = [""]
+            return new_choices
+
     def update_roi_selection(self):
-        print("update_roi_selection")
+        worker = self._get_roi_choices()
+        worker.returned.connect(self.apply_roi_choices_update)
+        worker.start()
+
+    def apply_roi_choices_update(self, roi_list):
+        """
+        Update the list of available ROIs in the dropdown
+        """
+        self._roi_picker.choices = roi_list
+        self._roi_picker._default_choices = roi_list
 
     def update_roi_table_choices(self):
         worker = threaded_get_table_list(
@@ -73,8 +103,6 @@ class ROILoader(Container):
         """
         self._roi_table_picker.choices = table_list
         self._roi_table_picker._default_choices = table_list
-        # Update the list of options that depend on the ROI table selection
-        self.update_roi_selection()
 
     def run(self):
         print("run")

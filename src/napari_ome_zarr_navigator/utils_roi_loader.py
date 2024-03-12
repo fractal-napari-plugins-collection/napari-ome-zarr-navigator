@@ -2,6 +2,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+import anndata as ad
 import zarr
 from napari.qt.threading import thread_worker
 
@@ -10,6 +11,13 @@ from napari.qt.threading import thread_worker
 def get_zattrs(zarr_url):
     with zarr.open(zarr_url) as zarr_attrs:
         return dict(zarr_attrs.attrs)
+
+
+@lru_cache(maxsize=16)
+def read_table(zarr_url: Path, roi_table):
+    # TODO: Make this work for cloud-based files => different paths?
+    table_url = zarr_url / f"tables/{roi_table}"
+    return ad.read_zarr(table_url)
 
 
 def get_table_list(zarr_url, table_type: str = None, strict: bool = False):
