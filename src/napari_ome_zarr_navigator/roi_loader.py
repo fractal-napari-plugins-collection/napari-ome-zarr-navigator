@@ -60,24 +60,23 @@ class ROILoader(Container):
             ]
         )
 
-    @thread_worker
-    def _get_roi_choices(self):
-        if not self._roi_table_picker.value:
-            # When no roi table is provided.
-            # E.g. during bug with self._roi_table_picker reset
-            return [""]
-        try:
-            roi_table = read_table(
-                self._zarr_url_picker.value, self._roi_table_picker.value
-            )
-            new_choices = list(roi_table.obs_names)
-            return new_choices
-        except zarr.errors.PathNotFoundError:
-            new_choices = [""]
-            return new_choices
-
     def update_roi_selection(self):
-        worker = self._get_roi_choices()
+        @thread_worker
+        def get_roi_choices():
+            if not self._roi_table_picker.value:
+                # When no roi table is provided.
+                # E.g. during bug with self._roi_table_picker reset
+                return [""]
+            try:
+                roi_table = read_table(
+                    self._zarr_url_picker.value, self._roi_table_picker.value
+                )
+                new_choices = list(roi_table.obs_names)
+                return new_choices
+            except zarr.errors.PathNotFoundError:
+                return [""]
+
+        worker = get_roi_choices()
         worker.returned.connect(self.apply_roi_choices_update)
         worker.start()
 
