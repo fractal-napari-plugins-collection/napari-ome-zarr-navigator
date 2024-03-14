@@ -1,3 +1,5 @@
+import logging
+
 import napari
 import zarr
 from magicgui.widgets import (
@@ -13,6 +15,8 @@ from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.utils_roi_loader import (
     read_table,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ROILoader(Container):
@@ -124,9 +128,6 @@ class ROILoader(Container):
         self._roi_table_picker.choices = table_list
         self._roi_table_picker._default_choices = table_list
 
-    def run(self):
-        print("run")
-
     def update_image_selection(self):
         zarr_url = self._zarr_url_picker.value
         try:
@@ -161,6 +162,56 @@ class ROILoader(Container):
         # Initialize available features
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
+
+    def run(self):
+        # roi_table = self._roi_table_picker.value
+        # roi_name = self._roi_picker.value
+        # level = self._level_picker.value
+        # channels = self._channel_picker.value
+        # labels = self._label_picker.value
+        # if len(channels) < 1 and len(labels) < 1:
+        #     logger.info(
+        #         "No channel or labels selected. "
+        #         "Select the channels/labels you want to load"
+        #     )
+        #     return
+        # blending = None
+        # scale_img = None
+        print("run")
+
+        # # Load intensity images
+        # for channel in channels:
+        #     img_roi, scale_img = load_intensity_roi(
+        #         zarr_url=self._zarr_url_picker.value,
+        #         roi_of_interest=roi_name,
+        #         channel_index=self.channel_names_dict[channel],
+        #         level=level,
+        #         roi_table=roi_table,
+        #     )
+        #     if not np.any(img_roi):
+        #         return
+        #     channel_meta = self.channel_dict[self.channel_names_dict[channel]]
+        #     colormap = Colormap(
+        #         ["#000000", f"#{channel_meta['color']}"],
+        #         name=channel_meta["color"],
+        #     )
+        #     try:
+        #         rescaling = (
+        #             channel_meta["window"]["start"],
+        #             channel_meta["window"]["end"],
+        #         )
+        #     except KeyError:
+        #         rescaling = None
+
+        #     self._viewer.add_image(
+        #         img_roi,
+        #         scale=scale_img,
+        #         blending=blending,
+        #         contrast_limits=rescaling,
+        #         colormap=colormap,
+        #         name=channel,
+        #     )
+        #     blending = "additive"
 
 
 class ImageEvent:

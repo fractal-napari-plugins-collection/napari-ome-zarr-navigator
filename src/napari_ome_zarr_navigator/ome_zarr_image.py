@@ -1,8 +1,14 @@
 import logging
+from functools import lru_cache
 from pathlib import Path
 
+import anndata as ad
+import dask.array as da
+import numpy as np
 import zarr
+from fractal_tasks_core.ngff.specs import Multiscale
 from fractal_tasks_core.ngff.zarr_utils import load_NgffImageMeta
+from fractal_tasks_core.roi import convert_ROI_table_to_indices
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +127,121 @@ class OMEZarrImage:
             # Handle the case where the path does not exist
             print(f"Path does not exist: {path}")
             return False
+
+    @staticmethod
+    @lru_cache(maxsize=16)
+    def read_table(zarr_url, roi_table: str):
+        with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
+            return ad.read_zarr(table)
+
+    def _get_image_scale_zyx(self, level: str, multiscales: list[Multiscale]):
+        def get_scale_for_path(level, dataset_list):
+            for dataset in dataset_list:
+                if dataset.path == level:
+                    if len(dataset.coordinateTransformations) > 1:
+                        raise NotImplementedError(
+                            "OMEZarrImage has only been implemented for Zarrs "
+                            "with a single coordinate transformation"
+                        )
+                    # Only handles datasets with a single scale
+                    return dataset.coordinateTransformations[0].scale
+            raise ValueError(
+                f"Level {level} not available in {self.zarr_url}. The "
+                f"following levels are available: {dataset_list}"
+            )
+
+        if len(multiscales) > 1:
+            raise NotImplementedError(
+                "OMEZarrImage has only been implemented for Zarrs with a "
+                "single multiscales"
+            )
+
+        scale = get_scale_for_path(str(level), multiscales[0].datasets)
+        if len(scale) < 3:
+            raise NotImplementedError(
+                "OMEZarrImage has only been implemented for OME-Zarrs that "
+                "contain the zyx dimensions last. This Zarr had: "
+                f"{multiscales[0].axes}"
+            )
+
+        if (
+            multiscales[0].axes[-3].name == "z"
+            and multiscales[0].axes[-2].name == "y"
+            and multiscales[0].axes[-1].name == "x"
+        ):
+            return scale[-3:]
+        elif (
+            multiscales[0].axes[-3].name == "c"
+            and multiscales[0].axes[-2].name == "y"
+            and multiscales[0].axes[-1].name == "x"
+        ):
+            logger.warning(
+                "Processing a cyx image. This has not been tested well."
+            )
+            return scale[-3:]
+        else:
+            raise NotImplementedError(
+                "OMEZarrImage has only been implemented for OME-Zarrs that "
+                "contain the zyx dimensions last. This Zarr had: "
+                f"{multiscales[0].axes}"
+            )
+
+    def get_roi_indices(
+        self,
+        roi_table: str,
+        roi_of_interest: int | str,
+        level,
+        multiscales: list[Multiscale],
+    ):
+        # Get the ROI table
+        roi_an = self.read_table(self.zarr_url, roi_table)
+        img_scale = self._get_image_scale_zyx(level, multiscales=multiscales)
+
+        # Get ROI indices for labels
+        # TODO: Switch to a more robust way of loading indices when the
+        # dimensionality of the image can vary. This only works for 3D images
+        # (all Yokogawa images are saved as 3D images) and
+        # by accident for 2D MD images (if they are multichannel)
+        # See issue 420 on fractal-tasks-core
+        indices_list = convert_ROI_table_to_indices(
+            roi_an,
+            full_res_pxl_sizes_zyx=img_scale,
+            level=int(level),
+        )
+
+        # TODO: Give access via ROI name? Do all ROIs have names?
+        # Get the indices for a given roi => Verify whether this works for
+        # typical masking ROI tables => yes it does (but they just have indices,
+        # the indices don't match the label column)
+        # Do we optionally name the ROI by label if a label is present?
+        # How would we abstract that?
+        # TODO: Find the index of the ROI name:
+
+        return indices_list[roi_of_interest][:]
+
+    def load_intensity_roi(
+        self,
+        roi_of_interest: int,
+        channel_index: int,  # TODO: Make this channel name?
+        level: str = "0",
+        roi_table="FOV_ROI_table",
+    ):
+        multiscales = self.image_meta.multiscales
+        img_scale = self._get_image_scale_zyx(level, multiscales=multiscales)
+        s_z, e_z, s_y, e_y, s_x, e_x = self.get_roi_indices(
+            roi_table,
+            roi_of_interest,
+            level,
+            multiscales=multiscales,
+        )
+
+        # Load data
+        img_data_zyx = da.from_zarr(f"{self.zarr_url}/{level}")[channel_index]
+
+        if len(img_data_zyx.shape) == 2:
+            img_roi = img_data_zyx[s_y:e_y, s_x:e_x]
+            img_scale = img_scale[1:]
+        else:
+            img_roi = img_data_zyx[s_z:e_z, s_y:e_y, s_x:e_x]
+
+        return np.array(img_roi), img_scale
