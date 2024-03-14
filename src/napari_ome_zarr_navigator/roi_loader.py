@@ -36,16 +36,16 @@ class ROILoader(Container):
         )
         self._run_button = PushButton(value=False, text="Load ROI")
 
-        self._ome_zarr_image = None
+        self._ome_zarr_image: OMEZarrImage = None
         self.image_changed = ImageEvent()
         # Initialize possible choices
 
         # Update selections & bind buttons
         self._zarr_url_picker.changed.connect(self.update_image_selection)
         self.image_changed.connect(self.update_roi_table_choices)
-
-        self._run_button.clicked.connect(self.run)
+        self.image_changed.connect(self.update_available_image_attrs)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
+        self._run_button.clicked.connect(self.run)
 
         if zarr_url:
             self.ome_zarr_image = OMEZarrImage(zarr_url)
@@ -68,7 +68,7 @@ class ROILoader(Container):
         return self._ome_zarr_image
 
     @ome_zarr_image.setter
-    def ome_zarr_image(self, value):
+    def ome_zarr_image(self, value) -> OMEZarrImage:
         if self._ome_zarr_image != value:
             self._ome_zarr_image = value
             self.image_changed.emit(self._ome_zarr_image)
@@ -87,12 +87,12 @@ class ROILoader(Container):
 
         if self.ome_zarr_image:
             worker = get_roi_choices()
-            worker.returned.connect(self.apply_roi_choices_update)
+            worker.returned.connect(self._apply_roi_choices_update)
             worker.start()
         else:
-            self.apply_roi_choices_update([""])
+            self._apply_roi_choices_update([""])
 
-    def apply_roi_choices_update(self, roi_list):
+    def _apply_roi_choices_update(self, roi_list):
         """
         Update the list of available ROIs in the dropdown
         """
@@ -112,12 +112,12 @@ class ROILoader(Container):
                 table_type="ROIs",
                 strict=False,
             )
-            worker.returned.connect(self.apply_roi_table_choices_update)
+            worker.returned.connect(self._apply_roi_table_choices_update)
             worker.start()
         else:
-            self.apply_roi_table_choices_update([""])
+            self._apply_roi_table_choices_update([""])
 
-    def apply_roi_table_choices_update(self, table_list):
+    def _apply_roi_table_choices_update(self, table_list):
         """
         Update the list of available ROI tables in the dropdown menu
         """
@@ -134,25 +134,33 @@ class ROILoader(Container):
         except ValueError:
             self.ome_zarr_image = None
 
-    def update_image_metadata(self):
-        # Idea for updating channel selection:
-        # Have a metadata object as a class variable (self.image_metadata).
-        # Update the different selectors when the object changes => NGFFmetamodel?
+    def update_available_image_attrs(self, new_zarr_img):
+        if new_zarr_img:
+            channels = self.ome_zarr_image.get_channel_list()
+            levels = self.ome_zarr_image.get_pyramid_levels()
+            labels = self.ome_zarr_image.get_labels_list()
+            features = self.ome_zarr_image.get_tables_list(
+                table_type="feature_table"
+            )
+            self.set_available_image_attrs(channels, levels, labels, features)
+        else:
+            # If zarr image was set to None, reset all selectors
+            self.set_available_image_attrs([""], [""], [""], [""])
 
-        # What I need to know are:
-        # 1) Channel list
-        # 2) Number of pyramid levels
-        # 3) Label list (from labels/.zattrs)
-        # 4) Table list (from tables/.zattrs)
+    def set_available_image_attrs(self, channels, levels, labels, features):
+        self._channel_picker.choices = channels
+        self._channel_picker._default_choices = channels
+        # Set pyramid levels
+        self._level_picker.choices = levels
+        self._level_picker._default_choices = levels
 
-        # They go into:
-        # self._channel_picker,
-        # self._level_picker,
-        # self._label_picker,
-        # self._feature_picker,
+        # Initialize available label images
+        self._label_picker.choices = labels
+        self._label_picker._default_choices = labels
 
-        # For every feature table: Table .zattrs => corresponding label image
-        pass
+        # Initialize available features
+        self._feature_picker.choices = features
+        self._feature_picker._default_choices = features
 
 
 class ImageEvent:
