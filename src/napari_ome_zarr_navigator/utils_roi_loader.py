@@ -14,10 +14,9 @@ def get_zattrs(zarr_url):
 
 
 @lru_cache(maxsize=16)
-def read_table(zarr_url: Path, roi_table):
-    # TODO: Make this work for cloud-based files => different paths?
-    table_url = zarr_url / f"tables/{roi_table}"
-    return ad.read_zarr(table_url)
+def read_table(zarr_url: str, roi_table: str):
+    with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
+        return ad.read_zarr(table)
 
 
 def get_table_list(zarr_url, table_type: str = None, strict: bool = False):
