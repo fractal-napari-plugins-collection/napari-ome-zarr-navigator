@@ -9,9 +9,9 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 
+from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.utils_roi_loader import (
     read_table,
-    threaded_get_table_list,
 )
 
 
@@ -36,10 +36,12 @@ class ROILoader(Container):
         )
         self._run_button = PushButton(value=False, text="Load ROI")
 
+        self.ome_zarr_image = None
         # Initialize possible choices
         self.update_roi_selection()
 
         # Update selections & bind buttons
+        self._zarr_url_picker.changed.connect(self.update_image_selection)
         self._zarr_url_picker.changed.connect(self.update_roi_table_choices)
         self._run_button.clicked.connect(self.run)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
@@ -63,10 +65,6 @@ class ROILoader(Container):
     def update_roi_selection(self):
         @thread_worker
         def get_roi_choices():
-            if not self._roi_table_picker.value:
-                # When no roi table is provided.
-                # E.g. during bug with self._roi_table_picker reset
-                return [""]
             try:
                 roi_table = read_table(
                     self._zarr_url_picker.value, self._roi_table_picker.value
@@ -76,9 +74,12 @@ class ROILoader(Container):
             except zarr.errors.PathNotFoundError:
                 return [""]
 
-        worker = get_roi_choices()
-        worker.returned.connect(self.apply_roi_choices_update)
-        worker.start()
+        if self.ome_zarr_image:
+            worker = get_roi_choices()
+            worker.returned.connect(self.apply_roi_choices_update)
+            worker.start()
+        else:
+            self.apply_roi_choices_update([""])
 
     def apply_roi_choices_update(self, roi_list):
         """
@@ -88,13 +89,22 @@ class ROILoader(Container):
         self._roi_picker._default_choices = roi_list
 
     def update_roi_table_choices(self):
-        worker = threaded_get_table_list(
-            zarr_url=self._zarr_url_picker.value,
-            table_type="ROIs",
-            strict=False,
-        )
-        worker.returned.connect(self.apply_roi_table_choices_update)
-        worker.start()
+        @thread_worker
+        def threaded_get_table_list(table_type: str = None, strict=False):
+            return self.ome_zarr_image.get_tables_list(
+                table_type=table_type,
+                strict=strict,
+            )
+
+        if self.ome_zarr_image:
+            worker = threaded_get_table_list(
+                table_type="ROIs",
+                strict=False,
+            )
+            worker.returned.connect(self.apply_roi_table_choices_update)
+            worker.start()
+        else:
+            self.apply_roi_table_choices_update([""])
 
     def apply_roi_table_choices_update(self, table_list):
         """
@@ -105,6 +115,33 @@ class ROILoader(Container):
 
     def run(self):
         print("run")
+
+    def update_image_selection(self):
+        zarr_url = self._zarr_url_picker.value
+        try:
+            self.ome_zarr_image = OMEZarrImage(zarr_url)
+        except ValueError:
+            self.ome_zarr_image = None
+
+    def update_image_metadata(self):
+        # Idea for updating channel selection:
+        # Have a metadata object as a class variable (self.image_metadata).
+        # Update the different selectors when the object changes => NGFFmetamodel?
+
+        # What I need to know are:
+        # 1) Channel list
+        # 2) Number of pyramid levels
+        # 3) Label list (from labels/.zattrs)
+        # 4) Table list (from tables/.zattrs)
+
+        # They go into:
+        # self._channel_picker,
+        # self._level_picker,
+        # self._label_picker,
+        # self._feature_picker,
+
+        # For every feature table: Table .zattrs => corresponding label image
+        pass
 
     # def run(self):
     #     roi_table = self._roi_table_picker.value
@@ -299,41 +336,3 @@ class ROILoader(Container):
     #     except zarr.errors.PathNotFoundError:
     #         new_choices = [""]
     #         return new_choices
-
-    # def _get_channel_choices(self):
-    #     self.channel_dict = get_channel_dict(self._zarr_url_picker.value)
-    #     self.channel_names_dict = {}
-    #     for channel_index in self.channel_dict.keys():
-    #         channel_name = self.channel_dict[channel_index]["label"]
-    #         self.channel_names_dict[channel_name] = channel_index
-    #     return list(self.channel_names_dict.keys())
-
-    # def _get_label_choices(self):
-    #     self.label_dict = get_label_dict(
-    #         Path(self._zarr_url_picker.value) / "labels"
-    #     )
-    #     return list(self.label_dict.values())
-
-    # def _get_table_choices(self, type):
-    #     # TODO: Once we have relevant metadata, allow this function to only
-    #     # load ROI tables or only feature tables => type features or ROIs
-    #     self.label_dict = get_feature_dict(
-    #         Path(self._zarr_url_picker.value) / "tables"
-    #     )
-    #     potential_tables = list(self.label_dict.values())
-    #     if type == "ROIs":
-    #         return [table for table in potential_tables if "ROI" in table]
-    #     else:
-    #         return [table for table in potential_tables if "ROI" not in table]
-
-    # def _get_level_choices(self):
-    #     try:
-    #         metadata = get_metadata(self._zarr_url_picker.value)
-    #         dataset = 0  # FIXME, hard coded in case multiple multiscale
-    #         # datasets would be present & multiscales is a list
-    #         nb_levels = len(metadata.attrs["multiscales"][dataset]["datasets"])
-    #         return list(range(nb_levels))
-    #     except KeyError:
-    #         # This happens when no valid OME-Zarr file is selected, thus no
-    #         # metadata file is found & no levels can be set
-    #         return [""]
