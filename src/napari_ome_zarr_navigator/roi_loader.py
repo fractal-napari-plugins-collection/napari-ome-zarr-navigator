@@ -36,18 +36,19 @@ class ROILoader(Container):
         )
         self._run_button = PushButton(value=False, text="Load ROI")
 
-        self.ome_zarr_image = None
+        self._ome_zarr_image = None
+        self.image_changed = ImageEvent()
         # Initialize possible choices
-        self.update_roi_selection()
 
         # Update selections & bind buttons
         self._zarr_url_picker.changed.connect(self.update_image_selection)
-        self._zarr_url_picker.changed.connect(self.update_roi_table_choices)
+        self.image_changed.connect(self.update_roi_table_choices)
+
         self._run_button.clicked.connect(self.run)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
 
         if zarr_url:
-            self._zarr_url_picker.value = zarr_url
+            self.ome_zarr_image = OMEZarrImage(zarr_url)
 
         super().__init__(
             widgets=[
@@ -61,6 +62,16 @@ class ROILoader(Container):
                 self._run_button,
             ]
         )
+
+    @property
+    def ome_zarr_image(self):
+        return self._ome_zarr_image
+
+    @ome_zarr_image.setter
+    def ome_zarr_image(self, value):
+        if self._ome_zarr_image != value:
+            self._ome_zarr_image = value
+            self.image_changed.emit(self._ome_zarr_image)
 
     def update_roi_selection(self):
         @thread_worker
@@ -88,7 +99,7 @@ class ROILoader(Container):
         self._roi_picker.choices = roi_list
         self._roi_picker._default_choices = roi_list
 
-    def update_roi_table_choices(self):
+    def update_roi_table_choices(self, event):
         @thread_worker
         def threaded_get_table_list(table_type: str = None, strict=False):
             return self.ome_zarr_image.get_tables_list(
@@ -142,6 +153,18 @@ class ROILoader(Container):
 
         # For every feature table: Table .zattrs => corresponding label image
         pass
+
+
+class ImageEvent:
+    def __init__(self):
+        self.handlers = []
+
+    def connect(self, handler):
+        self.handlers.append(handler)
+
+    def emit(self, *args, **kwargs):
+        for handler in self.handlers:
+            handler(*args, **kwargs)
 
     # def run(self):
     #     roi_table = self._roi_table_picker.value
