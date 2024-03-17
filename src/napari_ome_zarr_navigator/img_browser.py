@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 
 
 class ImgBrowser(Container):
-    def __init__(self, viewer: "napari.viewer.Viewer", zarr_url=None):
+    # TODO: if no condition table is available in the OME-zarr only load the col/rows into the Select widget, otherwise load the filters
+    def __init__(self, viewer: "napari.viewer.Viewer"):
         self.viewer = viewer
         self.zarr_dir = FileEdit(
             label="OME-ZARR URL", mode="d", filter="*.zarr"
@@ -38,6 +39,7 @@ class ImgBrowser(Container):
             label="Mode",
             value="Drug/Conc",
         )
+
         self.drug = ComboBox(
             label="Drug",
         )
@@ -47,28 +49,37 @@ class ImgBrowser(Container):
         self.row_alpha = ComboBox(
             label="Row",
         )
-        self.col = SpinBox(label="Column")
+        self.col = ComboBox(label="Column")
         self.well = ComboBox(
             label="Well",
         )
-        self.display_drugs = Select(label="content", enabled=True)
+        self.display_drugs = Select(
+            label="content", enabled=True, allow_multiple=False
+        )
         self.select_well = PushButton(text="Select well", enabled=False)
         self.new_layers = CheckBox(label="Add Image/Labels as new layer(s)")
         self.drug_layout = pd.DataFrame(
             {"row": [], "col": [], "drug": [], "concentration": [], "unit": []}
         )
+
+        self.well = Select(label="content", enabled=True, allow_multiple=False)
+
+        # super().__init__(
+        #     widgets=[
+        #         self.zarr_dir,
+        #         self.drug,
+        #         self.concentration,
+        #         self.row_alpha,
+        #         self.col,
+        #         self.well,
+        #         self.display_drugs,
+        #         self.new_layers,
+        #         self.select_well,
+        #     ]
+        # )
+
         super().__init__(
-            widgets=[
-                self.zarr_dir,
-                self.drug,
-                self.concentration,
-                self.row_alpha,
-                self.col,
-                self.well,
-                self.display_drugs,
-                self.new_layers,
-                self.select_well,
-            ]
+            widgets=[self.zarr_dir, self.row_alpha, self.col, self.well],
         )
         self.drug.changed.connect(self.set_doses)
         # self.select_well.clicked.connect(self.load_zarr)
@@ -80,6 +91,56 @@ class ImgBrowser(Container):
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
 
+        self.zarr_dir.changed.connect(self.initialize_filters)
+
+    def initialize_filters(self):
+        zarr_dict = parse_zarr_url(self.zarr_dir.value)
+        self.zarr_root = zarr_dict["root"]
+        try:
+            self.df = (
+                load_table(
+                    self.zarr_root,
+                    "condition",
+                    zarr_dict["well"],
+                )
+                .to_df()
+                .astype({"col": "int"})
+            )
+        except PathNotFoundError:
+            napari.utils.notifications.show_warning(
+                f"Some wells don't have a conditions table associated."
+            )
+        else:
+            filter_names = self.df.columns.drop(["row", "col"])
+            self.filters = Container(
+                widgets=[
+                    Container(
+                        widgets=[
+                            ComboBox(
+                                choices=self.df[filter].unique(), enabled=False
+                            ),
+                            CheckBox(label=filter, value=False),
+                        ],
+                        layout="horizontal",
+                    )
+                    for filter in filter_names
+                ],
+                layout="vertical",
+            )
+            # print(self.filters[0][0])
+            self.viewer.window.add_dock_widget(
+                widget=self.filters, name="Filters"
+            )
+
+        for i in range(self.df.shape[1]):
+            self.filters[i][1].changed.connect(self.toggle_filter(i))
+
+    def toggle_filter(self, i):
+        def toggle_on_change():
+            self.filters[i][0].enabled = not self.filters[i][0].enabled
+
+        return toggle_on_change
+
     def check_empty_layerlist(self):
         if len(self.viewer.layers) == 0:
             self.zarr_dir.value = ""
@@ -88,9 +149,12 @@ class ImgBrowser(Container):
         active = self.viewer.layers.selection.active
         if active and active.as_layer_data_tuple()[-1] == "image":
             path = self.viewer.layers.selection.active.source.path
-            print(path)
             if path:
                 self.zarr_dir.value = Path(path)
+            if "sample_path" in self.viewer.layers.selection.active.metadata:
+                self.zarr_dir.value = Path(
+                    self.viewer.layers.selection.active.metadata["sample_path"]
+                )
 
     def select_layer(self):
         zarr_dict = parse_zarr_url(self.zarr_dir.value)
@@ -106,7 +170,6 @@ class ImgBrowser(Container):
                     .to_df()
                     .astype({"col": "int"})
                 )
-                print(self.drug_layout)
             except PathNotFoundError:
                 napari.utils.notifications.show_warning(
                     f"Some wells don't have a conditions table associated."
@@ -116,9 +179,8 @@ class ImgBrowser(Container):
                 self.row_alpha._default_choices = self.drug_layout[
                     "row"
                 ].unique()
-                self.col.min = self.drug_layout["col"].min()
-                self.col.max = self.drug_layout["col"].max()
-                self.col.value = self.drug_layout["col"].min()
+                self.col.choices = self.drug_layout["col"].unique()
+                self.col._default_choices = self.drug_layout["col"].unique()
                 self.drug.choices = self.drug_layout["drug"].unique()
                 self.drug._default_choices = self.drug_layout["drug"].unique()
                 if self.zarr_root == self.zarr_dir.value:
@@ -130,9 +192,8 @@ class ImgBrowser(Container):
         else:
             self.row_alpha.choices = []
             self.row_alpha._default_choices = []
-            self.col.min = 1
-            self.col.max = 24
-            self.col.value = 1
+            self.col.choices = []
+            self.col._default_choices = []
             self.drug.choices = []
             self.drug._default_choices = []
             self.set_doses()

@@ -93,6 +93,7 @@ def hiPSC_zarr() -> list[LayerDataTuple]:
 def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
     ome_zarr = load_ome_zarr_from_zenodo(doi, zarr_url)
     if ome_zarr:
+
         return [
             (
                 ome_zarr.data,
@@ -101,6 +102,7 @@ def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
                     "channel_axis": 0,
                     "contrast_limits": ome_zarr.metadata["contrast_limits"],
                     "colormap": ome_zarr.metadata["colormap"],
+                    "metadata": {"sample_path": ome_zarr.zarr.path},
                 },
                 "image",
             )

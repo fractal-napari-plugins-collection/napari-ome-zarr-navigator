@@ -17,7 +17,7 @@ contributions:
       title: Load sample data from Zenodo
   sample_data:
     - command: napari-ome-zarr-navigator.hiPSC_zarr
-      display_name: hiPSC (OME-ZARR)
+      display_name: hiPSC
       key: unique_id.1
   widgets:
     - command: napari-ome-zarr-navigator.make_img_browser
