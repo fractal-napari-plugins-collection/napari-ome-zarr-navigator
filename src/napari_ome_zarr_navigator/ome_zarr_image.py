@@ -189,7 +189,7 @@ class OMEZarrImage:
     def get_roi_indices(
         self,
         roi_table: str,
-        roi_of_interest: int | str,
+        roi_of_interest: int,
         level,
         multiscales: list[Multiscale],
     ):
