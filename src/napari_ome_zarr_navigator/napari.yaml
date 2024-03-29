@@ -12,9 +12,12 @@ contributions:
     - id: napari-ome-zarr-navigator.make_roi_loader
       python_name: napari_ome_zarr_navigator:ROILoader
       title: ROI Loader
+    - id: napari-ome-zarr-navigator.hiPSC_zarr
+      python_name: napari_ome_zarr_navigator._sample_data:hiPSC_zarr
+      title: Load sample data from Zenodo
   sample_data:
-    - command: napari-ome-zarr-navigator.make_sample_data
-      display_name: napari OME-Zarr Navigator
+    - command: napari-ome-zarr-navigator.hiPSC_zarr
+      display_name: hiPSC
       key: unique_id.1
   widgets:
     - command: napari-ome-zarr-navigator.make_img_browser
