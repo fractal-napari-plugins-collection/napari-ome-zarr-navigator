@@ -9,6 +9,7 @@ import zarr
 from fractal_tasks_core.ngff.specs import Multiscale
 from fractal_tasks_core.ngff.zarr_utils import load_NgffImageMeta
 from fractal_tasks_core.roi import convert_ROI_table_to_indices
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,15 @@ class OMEZarrImage:
         self.zarr_url = zarr_url
         if not self.is_zarr_dataset(zarr_url):
             raise ValueError
-
-        self.image_meta = load_NgffImageMeta(zarr_url)
+        try:
+            self.image_meta = load_NgffImageMeta(zarr_url)
+        except ValidationError as e:
+            # full_message = '. '.join(map(str, e.args))
+            raise ValueError(
+                "The provided Zarr is not a valid OME-Zarr image. Loading its"
+                "metadata triggered the following error ValidationError: "
+                f"{e.json()}"
+            ) from e
         with zarr.open(zarr_url, mode="r") as zarr_group:
             self.zarr_subgroups = list(zarr_group.group_keys())
 
