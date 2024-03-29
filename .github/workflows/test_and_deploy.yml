@@ -63,6 +63,13 @@ jobs:
       - name: Coverage
         uses: codecov/codecov-action@v3
 
+      - name: Cache Pooch folder
+        id: cache-pooch-folder
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pooch
+          key: pooch-cache
+
   deploy:
     # this will run when you have tagged a commit, starting with "v*"
     # and requires that you have put your twine API key in your
