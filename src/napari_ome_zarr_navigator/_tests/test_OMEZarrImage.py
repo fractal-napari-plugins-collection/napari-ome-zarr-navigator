@@ -103,3 +103,25 @@ def test_wrong_zarr_urls(zenodo_zarr):
     assert expected_error in str(exc_info.value)
     assert "multiscales" in str(exc_info.value)
     assert "field required" in str(exc_info.value)
+
+
+def test_roi_loading_from_indices(ome_zarr_image_2d):
+    img, scale = ome_zarr_image_2d.load_intensity_roi_with_indices(
+        roi_table="FOV_ROI_table",
+        roi_index=0,
+        channel_index=0,
+        level=2,
+    )
+    assert scale == [1.0, 0.65, 0.65]
+    assert img.shape == (1, 135, 160)
+
+
+def test_roi_loading(ome_zarr_image_2d):
+    img, scale = ome_zarr_image_2d.load_intensity_roi(
+        roi_table="FOV_ROI_table",
+        roi_name="FOV_1",
+        channel="DAPI",
+        level="2",
+    )
+    assert scale == [1.0, 0.65, 0.65]
+    assert img.shape == (1, 135, 160)

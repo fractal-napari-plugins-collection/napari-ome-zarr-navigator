@@ -53,7 +53,7 @@ def zenodo_zarr(testdata_path: Path) -> list[str]:
             f"{file_name}.zip", processor=pooch.Unzip(extract_dir=file_name)
         )
         zarr_full_path = file_paths[0].split(file_name)[0] + file_name
-        print(zarr_full_path)
+        # print(zarr_full_path)
         folder = folders[ind]
 
         # 2) Copy the downloaded Zarr into tests/data

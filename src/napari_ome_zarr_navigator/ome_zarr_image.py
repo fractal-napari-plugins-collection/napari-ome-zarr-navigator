@@ -29,7 +29,6 @@ class OMEZarrImage:
         try:
             self.image_meta = load_NgffImageMeta(zarr_url)
         except ValidationError as e:
-            # full_message = '. '.join(map(str, e.args))
             raise ValueError(
                 "The provided Zarr is not a valid OME-Zarr image. Loading its"
                 "metadata triggered the following error ValidationError: "
@@ -142,7 +141,7 @@ class OMEZarrImage:
         with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
             return ad.read_zarr(table)
 
-    def _get_image_scale_zyx(self, level: str, multiscales: list[Multiscale]):
+    def _get_image_scale_zyx(self, level: str, multiscales: Multiscale):
         def get_scale_for_path(level, dataset_list):
             for dataset in dataset_list:
                 if dataset.path == level:
@@ -158,6 +157,7 @@ class OMEZarrImage:
                 f"following levels are available: {dataset_list}"
             )
 
+        # FIXME: Drop need for providing multiscales, use from class variable?
         if len(multiscales) > 1:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for Zarrs with a "
@@ -197,15 +197,21 @@ class OMEZarrImage:
     def get_roi_indices(
         self,
         roi_table: str,
-        roi_of_interest: int,
-        level,
-        multiscales: list[Multiscale],
+        level: int,
+        pixel_size_zyx: tuple,
     ):
+        """
+        Get the indices of a specific ROI from a ROI table.
+
+        Args:
+        - roi_table: Name of the ROI table to load
+        - level: Resolution level to load
+        - pixel_size_zyx: pixel size as a tuple z, y, x
+
+        """
         # Get the ROI table
         roi_an = self.read_table(self.zarr_url, roi_table)
-        img_scale = self._get_image_scale_zyx(level, multiscales=multiscales)
 
-        # Get ROI indices for labels
         # TODO: Switch to a more robust way of loading indices when the
         # dimensionality of the image can vary. This only works for 3D images
         # (all Yokogawa images are saved as 3D images) and
@@ -213,35 +219,41 @@ class OMEZarrImage:
         # See issue 420 on fractal-tasks-core
         indices_list = convert_ROI_table_to_indices(
             roi_an,
-            full_res_pxl_sizes_zyx=img_scale,
+            full_res_pxl_sizes_zyx=pixel_size_zyx,
             level=int(level),
         )
 
-        # TODO: Give access via ROI name? Do all ROIs have names?
-        # Get the indices for a given roi => Verify whether this works for
-        # typical masking ROI tables => yes it does (but they just have indices,
-        # the indices don't match the label column)
-        # Do we optionally name the ROI by label if a label is present?
-        # How would we abstract that?
-        # TODO: Find the index of the ROI name:
+        return indices_list
 
-        return indices_list[roi_of_interest][:]
-
-    def load_intensity_roi(
+    # TODO: Abstract a level to work based on a zarr_url => work for intensity
+    # image and label image
+    # Needs to pass roi_table through in that case
+    # How robust is this when the resolutions vary? Label image has their own
+    # multiscales after all => still pass multiscales through, change back
+    # refactor of _get_image_scale_zyx?
+    def load_intensity_roi_with_indices(
         self,
-        roi_of_interest: int,
-        channel_index: int,  # TODO: Make this channel name?
-        level: str = "0",
-        roi_table="FOV_ROI_table",
+        roi_table: str,
+        roi_index: int,
+        channel_index: int,
+        level: int = 0,
     ):
-        multiscales = self.image_meta.multiscales
-        img_scale = self._get_image_scale_zyx(level, multiscales=multiscales)
+        """
+        Load an intensity ROI based on indices
+
+        Args:
+        - roi_table: Name of the ROI table to load
+        - roi_index: Index
+        - level: Resolution level to load
+        """
+        img_scale = self._get_image_scale_zyx(
+            level, multiscales=self.image_meta.multiscales
+        )
         s_z, e_z, s_y, e_y, s_x, e_x = self.get_roi_indices(
             roi_table,
-            roi_of_interest,
             level,
-            multiscales=multiscales,
-        )
+            pixel_size_zyx=img_scale,
+        )[roi_index][:]
 
         # Load data
         img_data_zyx = da.from_zarr(f"{self.zarr_url}/{level}")[channel_index]
@@ -253,3 +265,35 @@ class OMEZarrImage:
             img_roi = img_data_zyx[s_z:e_z, s_y:e_y, s_x:e_x]
 
         return np.array(img_roi), img_scale
+
+    def load_intensity_roi(
+        self,
+        roi_table: str,
+        roi_name: str,
+        channel: str,
+        level: str = "0",
+    ):
+        roi_an = self.read_table(self.zarr_url, roi_table)
+        roi_index = roi_an.obs.index.get_loc(roi_name)
+        # TODO: Give access via ROI name? Do all ROIs have names?
+        # Get the indices for a given roi => Verify whether this works for
+        # typical masking ROI tables => yes it does (but they just have indices,
+        # the indices don't match the label column)
+        # Do we optionally name the ROI by label if a label is present?
+        # How would we abstract that?
+
+        # This assumes the order of the omero channels will match the order
+        # of the channels in the Zarr array.
+        channels = self.get_channel_list()
+        # This triggers a ValueError if the channel is not found in the list
+        channel_index = channels.index(channel)
+
+        # FIXME: Convert to level index based on multiscales
+        level_index = int(level)
+
+        return self.load_intensity_roi_with_indices(
+            roi_table=roi_table,
+            roi_index=roi_index,
+            channel_index=channel_index,
+            level=level_index,
+        )
