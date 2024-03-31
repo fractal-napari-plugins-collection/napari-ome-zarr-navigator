@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
+import napari
 
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Union
@@ -7,10 +9,11 @@ from zarr.errors import PathNotFoundError
 import anndata as ad
 import zarr
 import re
+import logging
 
 
-from napari_ome_zarr_navigator.util import alpha_to_numeric, numeric_to_alpha
-
+from napari_ome_zarr_navigator.util import alpha_to_numeric
+from fractal_tasks_core.roi import convert_ROI_table_to_indices
 
 from magicgui.widgets import (
     CheckBox,
@@ -18,122 +21,97 @@ from magicgui.widgets import (
     Container,
     FileEdit,
     PushButton,
-    RadioButtons,
     Select,
-    SpinBox,
 )
 
-if TYPE_CHECKING:
-    import napari
+logger = logging.getLogger(__name__)
 
 
 class ImgBrowser(Container):
-    # TODO: if no condition table is available in the OME-zarr only load the col/rows into the Select widget, otherwise load the filters
     def __init__(self, viewer: "napari.viewer.Viewer"):
         self.viewer = viewer
         self.zarr_dir = FileEdit(
             label="OME-ZARR URL", mode="d", filter="*.zarr"
         )
-        self.selection_mode = RadioButtons(
-            choices=["Drug/Conc", "Row/Col"],
-            label="Mode",
-            value="Drug/Conc",
-        )
-
+        self.filters = []
         self.drug = ComboBox(
             label="Drug",
         )
         self.concentration = ComboBox(
             label="Conc. (nM)",
         )
-        self.row_alpha = ComboBox(
-            label="Row",
-        )
-        self.col = ComboBox(label="Column")
-        self.well = ComboBox(
-            label="Well",
-        )
         self.display_drugs = Select(
             label="content", enabled=True, allow_multiple=False
         )
-        self.select_well = PushButton(text="Select well", enabled=False)
+        self.select_well = PushButton(text="Go to well", enabled=False)
         self.new_layers = CheckBox(label="Add Image/Labels as new layer(s)")
         self.drug_layout = pd.DataFrame(
             {"row": [], "col": [], "drug": [], "concentration": [], "unit": []}
         )
 
-        self.well = Select(label="content", enabled=True, allow_multiple=False)
-
-        # super().__init__(
-        #     widgets=[
-        #         self.zarr_dir,
-        #         self.drug,
-        #         self.concentration,
-        #         self.row_alpha,
-        #         self.col,
-        #         self.well,
-        #         self.display_drugs,
-        #         self.new_layers,
-        #         self.select_well,
-        #     ]
-        # )
+        self.well = Select(label="Wells", enabled=True, allow_multiple=False)
 
         super().__init__(
-            widgets=[self.zarr_dir, self.row_alpha, self.col, self.well],
+            widgets=[self.zarr_dir, self.well, self.select_well],
         )
-        self.drug.changed.connect(self.set_doses)
-        # self.select_well.clicked.connect(self.load_zarr)
-        self.zarr_dir.changed.connect(self.select_layer)
-        self.row_alpha.changed.connect(self.set_drugs)
-        self.col.changed.connect(self.set_drugs)
-        self.drug.changed.connect(self.set_row_col)
-        self.concentration.changed.connect(self.set_row_col)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
-
         self.zarr_dir.changed.connect(self.initialize_filters)
+        self.zarr_dir.changed.connect(self.filter_df)
+        self.select_well.clicked.connect(self.go_to_well)
 
     def initialize_filters(self):
         zarr_dict = parse_zarr_url(self.zarr_dir.value)
         self.zarr_root = zarr_dict["root"]
-        try:
-            self.df = (
-                load_table(
-                    self.zarr_root,
-                    "condition",
-                    zarr_dict["well"],
+        if self.zarr_root:
+            adt = load_table(
+                self.zarr_root,
+                "condition",
+                zarr_dict["well"],
+            )
+            if adt:
+                self.df = adt.to_df()
+                self.filter_names = self.df.columns.drop(["row", "col"])
+                self.filters = Container(
+                    widgets=[
+                        Container(
+                            widgets=[
+                                ComboBox(
+                                    choices=sorted(self.df[filter].unique()),
+                                    enabled=False,
+                                ),
+                                CheckBox(label=filter, value=False),
+                            ],
+                            layout="horizontal",
+                        )
+                        for filter in self.filter_names
+                    ],
+                    layout="vertical",
                 )
-                .to_df()
-                .astype({"col": "int"})
-            )
-        except PathNotFoundError:
-            napari.utils.notifications.show_warning(
-                f"Some wells don't have a conditions table associated."
-            )
-        else:
-            filter_names = self.df.columns.drop(["row", "col"])
-            self.filters = Container(
-                widgets=[
-                    Container(
-                        widgets=[
-                            ComboBox(
-                                choices=self.df[filter].unique(), enabled=False
-                            ),
-                            CheckBox(label=filter, value=False),
-                        ],
-                        layout="horizontal",
-                    )
-                    for filter in filter_names
-                ],
-                layout="vertical",
-            )
-            # print(self.filters[0][0])
-            self.viewer.window.add_dock_widget(
-                widget=self.filters, name="Filters"
-            )
+                self.filter_widget = self.viewer.window.add_dock_widget(
+                    widget=self.filters, name="Filters"
+                )
 
-        for i in range(self.df.shape[1]):
-            self.filters[i][1].changed.connect(self.toggle_filter(i))
+                for i in range(len(self.filter_names)):
+                    self.filters[i][1].changed.connect(self.toggle_filter(i))
+                    self.filters[i][0].changed.connect(self.filter_df)
+                    self.filters[i][1].changed.connect(self.filter_df)
+            else:
+                msg = "No condition table is present in the OME-ZARR."
+                logger.info(msg)
+                napari.utils.notifications.show_info(msg)
+                wells = _validate_wells(None, self.zarr_dir.value)
+                wells_str = sorted([f"{w[0]}{w[1]}" for w in wells])
+                self.well.choices = wells_str
+                self.well._default_choices = wells_str
+                self.df = pd.DataFrame(
+                    {
+                        "row": [w[0] for w in wells],
+                        "col": [w[1] for w in wells],
+                    }
+                )
+
+            self.select_well.enabled = True
 
     def toggle_filter(self, i):
         def toggle_on_change():
@@ -144,6 +122,11 @@ class ImgBrowser(Container):
     def check_empty_layerlist(self):
         if len(self.viewer.layers) == 0:
             self.zarr_dir.value = ""
+            self.select_well.enabled = False
+            self.df = pd.DataFrame()
+            self.viewer.window.remove_dock_widget(widget=self.filter_widget)
+            self.well.choices = []
+            self.well._default_choices = []
 
     def get_zarr_url(self):
         active = self.viewer.layers.selection.active
@@ -156,158 +139,75 @@ class ImgBrowser(Container):
                     self.viewer.layers.selection.active.metadata["sample_path"]
                 )
 
-    def select_layer(self):
-        zarr_dict = parse_zarr_url(self.zarr_dir.value)
-        self.zarr_root = zarr_dict["root"]
-        if zarr_dict["root"]:
-            try:
-                self.drug_layout = (
-                    load_table(
-                        self.zarr_root,
-                        "condition",
-                        zarr_dict["well"],
+    def filter_df(self):
+        if not self.df.empty:
+            and_filter = pd.DataFrame(
+                [
+                    (
+                        self.df.iloc[:, i + 2] == self.filters[i][0].value
+                        if self.filters[i][1].value
+                        else self.df.iloc[:, i + 2] == self.df.iloc[:, i + 2]
                     )
-                    .to_df()
-                    .astype({"col": "int"})
-                )
-            except PathNotFoundError:
-                napari.utils.notifications.show_warning(
-                    f"Some wells don't have a conditions table associated."
-                )
-            else:
-                self.row_alpha.choices = self.drug_layout["row"].unique()
-                self.row_alpha._default_choices = self.drug_layout[
-                    "row"
-                ].unique()
-                self.col.choices = self.drug_layout["col"].unique()
-                self.col._default_choices = self.drug_layout["col"].unique()
-                self.drug.choices = self.drug_layout["drug"].unique()
-                self.drug._default_choices = self.drug_layout["drug"].unique()
-                if self.zarr_root == self.zarr_dir.value:
-                    self.select_well.enabled = True
-                    self.new_layers.enabled = True
-                else:
-                    self.new_layers.enabled = False
-                    self.select_well.enabled = False
-        else:
-            self.row_alpha.choices = []
-            self.row_alpha._default_choices = []
-            self.col.choices = []
-            self.col._default_choices = []
-            self.drug.choices = []
-            self.drug._default_choices = []
-            self.set_doses()
-            self.set_row_col()
-            self.set_drugs()
-            self.select_well.enabled = False
+                    for i in range(len(self.filter_names))
+                ]
+            ).min()
 
-    def set_doses(self):
-        if not self.drug_layout.empty:
-            concentrations = self.drug_layout.query(
-                "drug == @self.drug.value"
-            )["concentration"].unique()
-            self.concentration.choices = concentrations
-            self.concentration._default_choices = concentrations
+            tbl = self.df.loc[and_filter]
+            wells = (tbl["row"] + tbl["col"].astype(str)).sort_values()
+            self.well.choices = wells
+            self.well._default_choices = wells
 
-    def set_row_col(self):
-        if not self.drug_layout.empty:
-            tbl = self.drug_layout.query(
-                "(drug == @self.drug.value) & (concentration == @self.concentration.value)"
+    def go_to_well(self):
+        row_min = alpha_to_numeric(self.df["row"].min())
+        col_min = int(self.df["col"].min())
+        matches = [
+            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+        ]
+        wells = [(m.group(1), m.group(2)) for m in matches]
+        dataset = 0
+        level = 0
+
+        for row_alpha, col_str in wells:
+            row = alpha_to_numeric(row_alpha)
+            col = int(col_str)
+            roi_tbl = load_table(
+                self.zarr_root, "well_ROI_table", f"{row_alpha}{col_str}"
             )
-            well = tbl["row"] + tbl["col"].astype(str)
-            self.well.choices = well
-            self.well._default_choices = well
+            with zarr.open(
+                f"{self.zarr_root}/{row_alpha}/{col_str}/{dataset}"
+            ) as metadata:
+                img_scale = metadata.attrs["multiscales"][dataset]["datasets"][
+                    level
+                ]["coordinateTransformations"][0]["scale"]
 
-    def set_drugs(self):
-        if not self.drug_layout.empty:
-            tbl = self.drug_layout.query(
-                "(row == @self.row_alpha.value) & (col == @self.col.value)"
+            r = convert_ROI_table_to_indices(roi_tbl, img_scale[-3:])[0]
+
+            rec = np.array(
+                [
+                    [
+                        (col - col_min) * (r[3] - r[2]) + r[2],
+                        (row - row_min) * (r[5] - r[4]) + r[4],
+                    ],
+                    [
+                        (col - col_min) * (r[3] - r[2]) + r[3],
+                        (row - row_min) * (r[5] - r[4]) + r[5],
+                    ],
+                ]
             )
-            drug_concentrations = (
-                tbl["drug"] + " (" + tbl["concentration"].astype(str) + " nM)"
+
+            for layer in self.viewer.layers:
+                if type(layer) == napari.layers.Shapes:
+                    self.viewer.layers.remove(layer)
+            self.viewer.add_shapes(
+                rec,
+                shape_type="rectangle",
+                edge_width=10,
+                edge_color="white",
+                face_color="transparent",
+                name=f"{row_alpha}{col_str}",
             )
-            self.display_drugs.choices = drug_concentrations
-            self.display_drugs._default_choices = drug_concentrations
-
-    def toggle_selection_mode(self):
-        if self.selection_mode.value == "Row/Col":
-            self.row_alpha.visible = True
-            self.col.visible = True
-            self.drug.visible = False
-            self.concentration.visible = False
-            self.well.visible = False
-            self.display_drugs.visible = True
-        else:
-            self.row_alpha.visible = False
-            self.col.visible = False
-            self.drug.visible = True
-            self.concentration.visible = True
-            self.display_drugs.visible = False
-            self.well.visible = True
-
-    # def load_zarr(self):
-    #     if self.selection_mode.value == "Row/Col":
-    #         well = f"{self.row_alpha.value}{self.col.value}"
-    #         row_alpha = self.row_alpha.value
-    #         row = operio.util.alpha_to_numeric(row_alpha)
-    #         col = self.col.value
-    #     else:
-    #         well = self.well.value
-    #         m = re.match(r"(\w+)(\d+)", well)
-    #         row_alpha = m.group(1)
-    #         row = operio.util.alpha_to_numeric(row_alpha)
-    #         col = int(m.group(2))
-    #     roi_url, roi_idx = operio.io.get_roi(
-    #         self.zarr_root,
-    #         row_alpha,
-    #         row,
-    #         "well_ROI_table",
-    #         level=0,
-    #     )
-    #     if self.new_layers.value:
-    #         img = operio.io.load_intensity_roi(roi_url, roi_idx)
-    #         labels = operio.io.load_label_roi(roi_url, roi_idx)
-    #         self.viewer.add_image(img, name=f"{row_alpha}{col}")
-    #         label_layer = self.viewer.add_labels(
-    #             labels, name=f"{row_alpha}{col}_label"
-    #         )
-    #         operio.io.napari.add_features_to_labels(
-    #             label_layer, self.zarr_root, row_alpha, col
-    #         )
-    #     else:
-    #         self.draw_well(roi_idx, row, col, well)
-
-    # def draw_well(self, roi_idx: pd.DataFrame, row: int, col: int, well: str):
-    #     r = roi_idx.iloc[0]
-    #     row_min = operio.util.alpha_to_numeric(self.row_alpha.choices[0])
-    #     col_min = self.col.min
-
-    #     rec = np.array(
-    #         [
-    #             [
-    #                 (row - row_min) * (r.e_x - r.s_x) + r.s_x,
-    #                 (col - col_min) * (r.e_y - r.s_y) + r.s_y,
-    #             ],
-    #             [
-    #                 (row - row_min) * (r.e_x - r.s_x) + r.e_x,
-    #                 (col - col_min) * (r.e_y - r.s_y) + r.e_y,
-    #             ],
-    #         ]
-    #     )
-
-    #     for layer in self.viewer.layers:
-    #         if type(layer) == napari.layers.Shapes:
-    #             self.viewer.layers.remove(layer)
-    #     self.viewer.add_shapes(
-    #         rec,
-    #         shape_type="rectangle",
-    #         edge_width=5,
-    #         edge_color="white",
-    #         face_color="transparent",
-    #         name=well,
-    #     )
-    #     self.viewer.camera.center = rec.mean(axis=0)
-    #     self.viewer.camera.zoom = 0.25
+            self.viewer.camera.center = rec.mean(axis=0)
+            self.viewer.camera.zoom = 0.25
 
 
 def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
@@ -353,7 +253,7 @@ def load_table(
     wells: Union[str, list[str]] = None,
     dataset: int = 0,
 ) -> ad.AnnData:
-    """Load an Anndata table from a zarr url
+    """Load an Anndata table from a OME-ZARR URL
 
     Args:
         zarr_url: Path to the OME-ZARR
@@ -376,11 +276,12 @@ def load_table(
                 )
             )
         except PathNotFoundError:
-            print(f"No condition table was found for well {row_alpha}{col}")
-    if len(wells_str) > 1:
-        return ad.concat(tbl, keys=wells_str, index_unique="-")
-    else:
-        return ad.concat(tbl)
+            logger.info(f"Table {name} was not found in well {row_alpha}{col}")
+    if tbl:
+        if len(wells_str) > 1:
+            return ad.concat(tbl, keys=wells_str, index_unique="-")
+        else:
+            return ad.concat(tbl)
 
 
 def _validate_wells(
@@ -398,7 +299,6 @@ def _validate_wells(
     if wells is not None:
         wells = [wells] if isinstance(wells, str) else wells
         matches = [re.match(r"([A-Z]+)(\d+)", well) for well in wells]
-        # wells = set([(m.group(1), int(m.group(2))) for m in matches])
         wells = set([(m.group(1), m.group(2)) for m in matches])
     else:
         with zarr.open(zarr_url) as metadata:
@@ -406,6 +306,5 @@ def _validate_wells(
                 re.match(r"([A-Z]+)/(\d+)", well["path"])
                 for well in metadata.attrs["plate"]["wells"]
             ]
-            # wells = set([(m.group(1), int(m.group(2))) for m in matches])
             wells = set([(m.group(1), m.group(2)) for m in matches])
     return wells
