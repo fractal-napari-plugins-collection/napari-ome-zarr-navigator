@@ -34,22 +34,8 @@ class ImgBrowser(Container):
             label="OME-ZARR URL", mode="d", filter="*.zarr"
         )
         self.filters = []
-        self.drug = ComboBox(
-            label="Drug",
-        )
-        self.concentration = ComboBox(
-            label="Conc. (nM)",
-        )
-        self.display_drugs = Select(
-            label="content", enabled=True, allow_multiple=False
-        )
-        self.select_well = PushButton(text="Go to well", enabled=False)
-        self.new_layers = CheckBox(label="Add Image/Labels as new layer(s)")
-        self.drug_layout = pd.DataFrame(
-            {"row": [], "col": [], "drug": [], "concentration": [], "unit": []}
-        )
-
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
+        self.select_well = PushButton(text="Go to well", enabled=False)
 
         super().__init__(
             widgets=[self.zarr_dir, self.well, self.select_well],
