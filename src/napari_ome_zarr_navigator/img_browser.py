@@ -25,6 +25,7 @@ from magicgui.widgets import (
 )
 
 logger = logging.getLogger(__name__)
+logging.getLogger("ome_zarr").setLevel(logging.WARN)
 
 
 class ImgBrowser(Container):
@@ -40,11 +41,11 @@ class ImgBrowser(Container):
         super().__init__(
             widgets=[self.zarr_dir, self.well, self.select_well],
         )
-        self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
         self.zarr_dir.changed.connect(self.initialize_filters)
         self.zarr_dir.changed.connect(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
+        self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def initialize_filters(self):
         zarr_dict = parse_zarr_url(self.zarr_dir.value)
@@ -96,6 +97,7 @@ class ImgBrowser(Container):
                         "col": [w[1] for w in wells],
                     }
                 )
+                self.filter_names = None
 
             self.select_well.enabled = True
 
@@ -110,9 +112,12 @@ class ImgBrowser(Container):
             self.zarr_dir.value = ""
             self.select_well.enabled = False
             self.df = pd.DataFrame()
-            self.viewer.window.remove_dock_widget(widget=self.filter_widget)
             self.well.choices = []
             self.well._default_choices = []
+            if self.filter_names is not None:
+                self.viewer.window.remove_dock_widget(
+                    widget=self.filter_widget
+                )
 
     def get_zarr_url(self):
         active = self.viewer.layers.selection.active
@@ -126,7 +131,7 @@ class ImgBrowser(Container):
                 )
 
     def filter_df(self):
-        if not self.df.empty:
+        if self.filter_names is not None:
             and_filter = pd.DataFrame(
                 [
                     (
@@ -262,7 +267,9 @@ def load_table(
                 )
             )
         except PathNotFoundError:
-            logger.info(f"Table {name} was not found in well {row_alpha}{col}")
+            logger.info(
+                f'The table "{name}" was not found in well {row_alpha}{col}'
+            )
     if tbl:
         if len(wells_str) > 1:
             return ad.concat(tbl, keys=wells_str, index_unique="-")

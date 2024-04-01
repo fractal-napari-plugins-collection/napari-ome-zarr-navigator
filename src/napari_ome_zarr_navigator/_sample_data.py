@@ -8,6 +8,7 @@ import urllib
 import hashlib
 import wget
 import shutil
+import logging
 
 from napari.types import LayerDataTuple
 
@@ -15,6 +16,8 @@ from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader, Node
 
 from napari_ome_zarr_navigator import _TEST_DATA_DIR
+
+logging.getLogger("ome_zarr").setLevel(logging.WARN)
 
 
 def load_ome_zarr_from_zenodo(doi: str, zarr_url: Union[str, Path]):
