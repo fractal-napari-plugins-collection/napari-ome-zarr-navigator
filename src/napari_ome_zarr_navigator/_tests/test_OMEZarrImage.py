@@ -106,11 +106,13 @@ def test_wrong_zarr_urls(zenodo_zarr):
 
 
 def test_roi_loading_from_indices(ome_zarr_image_2d):
-    img, scale = ome_zarr_image_2d.load_intensity_roi_with_indices(
+    img, scale = ome_zarr_image_2d.load_zarr_array_index_based(
+        zarr_url=ome_zarr_image_2d.zarr_url,
         roi_table="FOV_ROI_table",
         roi_index=0,
         channel_index=0,
-        level=2,
+        multiscales=ome_zarr_image_2d.image_meta.multiscales,
+        level_path="2",
     )
     assert scale == [1.0, 0.65, 0.65]
     assert img.shape == (1, 135, 160)
@@ -121,7 +123,7 @@ def test_roi_loading(ome_zarr_image_2d):
         roi_table="FOV_ROI_table",
         roi_name="FOV_1",
         channel="DAPI",
-        level="2",
+        level_path="2",
     )
     assert scale == [1.0, 0.65, 0.65]
     assert img.shape == (1, 135, 160)

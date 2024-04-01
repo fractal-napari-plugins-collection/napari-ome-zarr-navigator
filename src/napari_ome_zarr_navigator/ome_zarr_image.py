@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 
 class OMEZarrImage:
     """
-    Class that represents a given OME-Zarr image
+    Class that represents a given OME-Zarr image.
 
-    Helper class provides read access & info about the Zarr image
+    Helper class provides read access & info about the Zarr image. One of the
+    complexities to be aware of: Some information, like the ROI table, is
+    specific to the whole Zarr image. But the image metadata and the label
+    metadata don't need to match (will have different multiscales).
 
     """
 
@@ -141,9 +144,13 @@ class OMEZarrImage:
         with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
             return ad.read_zarr(table)
 
-    def _get_image_scale_zyx(self, level: str, multiscales: Multiscale):
-        def get_scale_for_path(level, dataset_list):
-            for dataset in dataset_list:
+    @staticmethod
+    def _get_image_scale_zyx(level: str, multiscales: Multiscale):
+        def get_scale_and_index_for_path(level, dataset_list):
+            """
+            Returns the scale & the index of the level.
+            """
+            for i, dataset in enumerate(dataset_list):
                 if dataset.path == level:
                     if len(dataset.coordinateTransformations) > 1:
                         raise NotImplementedError(
@@ -151,20 +158,18 @@ class OMEZarrImage:
                             "with a single coordinate transformation"
                         )
                     # Only handles datasets with a single scale
-                    return dataset.coordinateTransformations[0].scale
-            raise ValueError(
-                f"Level {level} not available in {self.zarr_url}. The "
-                f"following levels are available: {dataset_list}"
-            )
+                    return dataset.coordinateTransformations[0].scale, i
+            raise ValueError(f"Level {level} not available in {dataset_list}.")
 
-        # FIXME: Drop need for providing multiscales, use from class variable?
         if len(multiscales) > 1:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for Zarrs with a "
                 "single multiscales"
             )
 
-        scale = get_scale_for_path(str(level), multiscales[0].datasets)
+        scale, level_index = get_scale_and_index_for_path(
+            str(level), multiscales[0].datasets
+        )
         if len(scale) < 3:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for OME-Zarrs that "
@@ -177,7 +182,7 @@ class OMEZarrImage:
             and multiscales[0].axes[-2].name == "y"
             and multiscales[0].axes[-1].name == "x"
         ):
-            return scale[-3:]
+            return scale[-3:], level_index
         elif (
             multiscales[0].axes[-3].name == "c"
             and multiscales[0].axes[-2].name == "y"
@@ -186,7 +191,7 @@ class OMEZarrImage:
             logger.warning(
                 "Processing a cyx image. This has not been tested well."
             )
-            return scale[-3:]
+            return scale[-3:], level_index
         else:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for OME-Zarrs that "
@@ -197,7 +202,7 @@ class OMEZarrImage:
     def get_roi_indices(
         self,
         roi_table: str,
-        level: int,
+        level_index: int,
         pixel_size_zyx: tuple,
     ):
         """
@@ -220,23 +225,19 @@ class OMEZarrImage:
         indices_list = convert_ROI_table_to_indices(
             roi_an,
             full_res_pxl_sizes_zyx=pixel_size_zyx,
-            level=int(level),
+            level=level_index,
         )
 
         return indices_list
 
-    # TODO: Abstract a level to work based on a zarr_url => work for intensity
-    # image and label image
-    # Needs to pass roi_table through in that case
-    # How robust is this when the resolutions vary? Label image has their own
-    # multiscales after all => still pass multiscales through, change back
-    # refactor of _get_image_scale_zyx?
-    def load_intensity_roi_with_indices(
+    def load_zarr_array_index_based(
         self,
+        zarr_url: str,
         roi_table: str,
         roi_index: int,
         channel_index: int,
-        level: int = 0,
+        multiscales: Multiscale,
+        level_path: str = "0",
     ):
         """
         Load an intensity ROI based on indices
@@ -246,17 +247,19 @@ class OMEZarrImage:
         - roi_index: Index
         - level: Resolution level to load
         """
-        img_scale = self._get_image_scale_zyx(
-            level, multiscales=self.image_meta.multiscales
+        img_scale, level_index = self._get_image_scale_zyx(
+            level_path,
+            multiscales=multiscales,
         )
         s_z, e_z, s_y, e_y, s_x, e_x = self.get_roi_indices(
             roi_table,
-            level,
+            level_index,
             pixel_size_zyx=img_scale,
         )[roi_index][:]
 
         # Load data
-        img_data_zyx = da.from_zarr(f"{self.zarr_url}/{level}")[channel_index]
+        # TODO: make this more axes-robust (e.g. able to handle 5D axes)
+        img_data_zyx = da.from_zarr(f"{zarr_url}/{level_path}")[channel_index]
 
         if len(img_data_zyx.shape) == 2:
             img_roi = img_data_zyx[s_y:e_y, s_x:e_x]
@@ -271,16 +274,10 @@ class OMEZarrImage:
         roi_table: str,
         roi_name: str,
         channel: str,
-        level: str = "0",
+        level_path: str = "0",
     ):
         roi_an = self.read_table(self.zarr_url, roi_table)
         roi_index = roi_an.obs.index.get_loc(roi_name)
-        # TODO: Give access via ROI name? Do all ROIs have names?
-        # Get the indices for a given roi => Verify whether this works for
-        # typical masking ROI tables => yes it does (but they just have indices,
-        # the indices don't match the label column)
-        # Do we optionally name the ROI by label if a label is present?
-        # How would we abstract that?
 
         # This assumes the order of the omero channels will match the order
         # of the channels in the Zarr array.
@@ -288,12 +285,11 @@ class OMEZarrImage:
         # This triggers a ValueError if the channel is not found in the list
         channel_index = channels.index(channel)
 
-        # FIXME: Convert to level index based on multiscales
-        level_index = int(level)
-
-        return self.load_intensity_roi_with_indices(
+        return self.load_zarr_array_index_based(
+            zarr_url=self.zarr_url,
             roi_table=roi_table,
             roi_index=roi_index,
             channel_index=channel_index,
-            level=level_index,
+            multiscales=self.image_meta.multiscales,
+            level_path=level_path,
         )
