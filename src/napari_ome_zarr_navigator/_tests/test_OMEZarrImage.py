@@ -110,12 +110,12 @@ def test_roi_loading_from_indices(ome_zarr_image_2d):
         zarr_url=ome_zarr_image_2d.zarr_url,
         roi_table="FOV_ROI_table",
         roi_index=0,
-        channel_index=0,
+        subset=0,
         multiscales=ome_zarr_image_2d.image_meta.multiscales,
         level_path="2",
     )
     assert scale == [1.0, 0.65, 0.65]
-    assert img.shape == (1, 135, 160)
+    assert img.shape == (1, 540, 640)
 
 
 def test_roi_loading(ome_zarr_image_2d):
@@ -126,4 +126,15 @@ def test_roi_loading(ome_zarr_image_2d):
         level_path="2",
     )
     assert scale == [1.0, 0.65, 0.65]
-    assert img.shape == (1, 135, 160)
+    assert img.shape == (1, 540, 640)
+
+
+def test_label_roi_loading_direct_level(ome_zarr_image_2d):
+    img, scale = ome_zarr_image_2d.load_label_roi(
+        roi_table="FOV_ROI_table",
+        roi_name="FOV_1",
+        label="nuclei",
+        level_path_label="0",
+    )
+    assert scale == [1.0, 0.65, 0.65]
+    assert img.shape == (1, 540, 640)
