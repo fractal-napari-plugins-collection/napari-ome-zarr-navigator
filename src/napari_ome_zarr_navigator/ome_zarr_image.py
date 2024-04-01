@@ -145,36 +145,22 @@ class OMEZarrImage:
         with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
             return ad.read_zarr(table)
 
-    def _get_image_scale_zyx(self, level: str, multiscales: Multiscale):
-        """
-        Returns the scale & the index of the level.
-        """
-
-        def get_scale_and_index_for_path(level, dataset_list):
-            for i, dataset in enumerate(dataset_list):
-                if dataset.path == level:
-                    if len(dataset.coordinateTransformations) > 1:
-                        raise NotImplementedError(
-                            "OMEZarrImage has only been implemented for Zarrs "
-                            "with a single coordinate transformation"
-                        )
-                    # Only handles datasets with a single scale
-                    return dataset.coordinateTransformations[0].scale, i
-            raise ValueError(f"Level {level} not available in {dataset_list}.")
-
-        if len(multiscales) > 1:
-            raise NotImplementedError(
-                "OMEZarrImage has only been implemented for Zarrs with a "
-                "single multiscales"
-            )
-        scale, level_index = get_scale_and_index_for_path(
-            str(level), multiscales[0].datasets
+    def _get_image_scale_zyx_and_index(self, level, multiscale):
+        # TODO: Get this back into the NgffImageMeta model:
+        # Access level by name
+        for i, dataset in enumerate(multiscale.datasets):
+            if dataset.path == level:
+                # Only handles datasets with a single scale
+                scale = self._sanitize_scale(
+                    dataset.coordinateTransformations[0].scale, multiscale
+                )
+                return scale, i
+        raise ValueError(
+            f"Level {level} not available in {multiscale.datasets}."
         )
-        scale = self._sanitize_scale(scale, multiscales)
-        return scale, level_index
 
-    def _get_full_res_scale_zyx(self, multiscales: Multiscale):
-        dataset = multiscales[0].datasets[0]
+    def _get_full_res_scale_zyx(self, multiscale: Multiscale):
+        dataset = multiscale.datasets[0]
         if len(dataset.coordinateTransformations) > 1:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for Zarrs "
@@ -182,29 +168,29 @@ class OMEZarrImage:
             )
         # Only handles datasets with a single scale
         scale = self._sanitize_scale(
-            dataset.coordinateTransformations[0].scale, multiscales
+            dataset.coordinateTransformations[0].scale, multiscale
         )
         return scale
 
     @staticmethod
-    def _sanitize_scale(scale, multiscales):
+    def _sanitize_scale(scale, multiscale):
         if len(scale) < 3:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for OME-Zarrs that "
                 "contain the zyx dimensions last. This Zarr had: "
-                f"{multiscales[0].axes}"
+                f"{multiscale.axes}"
             )
 
         if (
-            multiscales[0].axes[-3].name == "z"
-            and multiscales[0].axes[-2].name == "y"
-            and multiscales[0].axes[-1].name == "x"
+            multiscale.axes[-3].name == "z"
+            and multiscale.axes[-2].name == "y"
+            and multiscale.axes[-1].name == "x"
         ):
             return scale[-3:]
         elif (
-            multiscales[0].axes[-3].name == "c"
-            and multiscales[0].axes[-2].name == "y"
-            and multiscales[0].axes[-1].name == "x"
+            multiscale.axes[-3].name == "c"
+            and multiscale.axes[-2].name == "y"
+            and multiscale.axes[-1].name == "x"
         ):
             logger.warning(
                 "Processing a cyx image. This has not been tested well."
@@ -214,14 +200,41 @@ class OMEZarrImage:
             raise NotImplementedError(
                 "OMEZarrImage has only been implemented for OME-Zarrs that "
                 "contain the zyx dimensions last. This Zarr had: "
-                f"{multiscales[0].axes}"
+                f"{multiscale.axes}"
             )
 
+    def _get_available_scales_dict(self, multiscale):
+        """
+        Returns a dict of available scales.
+
+        Keys: Name of dataset (= the pyramid level)
+        Values: Their scales in zyx
+        """
+        scales_dict = {}
+        for dataset in multiscale.datasets:
+            scales_dict[dataset.path] = self._sanitize_scale(
+                dataset.coordinateTransformations[0].scale, multiscale
+            )
+
+        return scales_dict
+
     def _get_closest_level_path(
-        self, level_path, label_multiscales, img_multiscales
+        self, level_path: str, label_multiscale, img_multiscale
     ):
-        # FIXME: Implement actual search for closest resolution of path
-        return level_path
+        target_scale, _ = self._get_image_scale_zyx_and_index(
+            level_path, img_multiscale
+        )
+        label_scales = self._get_available_scales_dict(label_multiscale)
+        closest_scale = list(label_scales.keys())[0]
+        for key, val in label_scales.items():
+            if np.linalg.norm(
+                np.array(val) - np.array(target_scale)
+            ) < np.linalg.norm(
+                np.array(label_scales[closest_scale]) - np.array(target_scale)
+            ):
+                closest_scale = key
+
+        return closest_scale
 
     def get_roi_indices(
         self,
@@ -259,7 +272,7 @@ class OMEZarrImage:
         zarr_url: str,
         roi_table: str,
         roi_index: int,
-        multiscales: Multiscale,
+        multiscale: Multiscale,
         subset: Optional[int] = None,
         level_path: str = "0",
         as_np: bool = False,
@@ -274,21 +287,21 @@ class OMEZarrImage:
         - roi_index: Index
         - subset: Used to only load a given subset of a Zarr array, for
             example just one channel based on its index
-        - multiscales: Multiscales
+        - multiscale: Multiscale object
         - level_path: Name of the resolution level to load
         - as_np: Whether to return the array as a lazy dask array or a numpy
             array
 
         """
-        # TODO: Get multiscales from the zarr_url instead of needing it as
+        # TODO: Get multiscale from the zarr_url instead of needing it as
         # input here? How robustly can we get them for intensity image vs.
         # label image?
-        img_scale, level_index = self._get_image_scale_zyx(
+        img_scale, level_index = self._get_image_scale_zyx_and_index(
             level_path,
-            multiscales=multiscales,
+            multiscale=multiscale,
         )
         full_res_pxl_sizes_zyx = self._get_full_res_scale_zyx(
-            multiscales=multiscales
+            multiscale=multiscale
         )
         s_z, e_z, s_y, e_y, s_x, e_x = self.get_roi_indices(
             roi_table,
@@ -334,7 +347,7 @@ class OMEZarrImage:
             roi_table=roi_table,
             roi_index=roi_index,
             subset=channel_index,
-            multiscales=self.image_meta.multiscales,
+            multiscale=self.image_meta.multiscale,
             level_path=level_path,
         )
 
@@ -354,26 +367,25 @@ class OMEZarrImage:
         given pyramid level on the image level.
         """
         zarr_url_label = f"{self.zarr_url}/labels/{label}"
-        # TODO: Some verification that this label exists?
 
         roi_an = self.read_table(self.zarr_url, roi_table)
         roi_index = roi_an.obs.index.get_loc(roi_name)
 
-        label_multiscales = load_NgffImageMeta(zarr_url_label).multiscales
+        label_multiscale = load_NgffImageMeta(zarr_url_label).multiscale
 
         if level_path_label is not None:
             level_path = level_path_label
         else:
             level_path = self._get_closest_level_path(
                 level_path=level_path_img,
-                label_multiscales=label_multiscales,
-                img_multiscales=self.image_meta.multiscales,
+                label_multiscale=label_multiscale,
+                img_multiscale=self.image_meta.multiscale,
             )
 
         return self.load_zarr_array_index_based(
             zarr_url=zarr_url_label,
             roi_table=roi_table,
             roi_index=roi_index,
-            multiscales=label_multiscales,
+            multiscale=label_multiscale,
             level_path=level_path,
         )
