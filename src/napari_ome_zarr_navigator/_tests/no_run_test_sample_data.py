@@ -1,11 +1,9 @@
 from pathlib import Path
 
-from napari_ome_zarr_navigator.generate_test_data import (
+from napari_ome_zarr_navigator import _TEST_DATA_DIR
+from napari_ome_zarr_navigator._sample_data import (
     load_ome_zarr_from_zenodo,
 )
-
-
-from napari_ome_zarr_navigator import _TEST_DATA_DIR
 
 
 def test_load_zenodo_data():
@@ -13,4 +11,4 @@ def test_load_zenodo_data():
     zarr_url = "20200812-CardiomyocyteDifferentiation14-Cycle1_mip.zarr"
     doi_path = doi_path = Path(_TEST_DATA_DIR).joinpath(doi.replace("/", "_"))
     load_ome_zarr_from_zenodo(doi, zarr_url)
-    assert doi_path.is_dir() == True
+    assert doi_path.is_dir()
