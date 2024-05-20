@@ -27,6 +27,7 @@ class ROILoader(Container):
         self.channel_dict = {}
         self.channel_names_dict = {}
         self.labels_dict = {}
+        self.label_layers = {}
         self._zarr_url_picker = FileEdit(label="Zarr URL", mode="d")
         self._roi_table_picker = ComboBox(label="ROI Table")
         self._roi_picker = ComboBox(label="ROI")
@@ -165,10 +166,14 @@ class ROILoader(Container):
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
 
-    def add_intensity_roi(self, channel: str, blending: str):
-        roi_table = self._roi_table_picker.value
-        roi_name = self._roi_picker.value
-        level = self._level_picker.value
+    def add_intensity_roi(
+        self,
+        channel: str,
+        roi_table: str,
+        roi_name: str,
+        level: str,
+        blending: str,
+    ):
         img_roi, scale_img = self.ome_zarr_image.load_intensity_roi(
             roi_table=roi_table,
             roi_name=roi_name,
@@ -209,6 +214,9 @@ class ROILoader(Container):
         # by label loading
 
     def run(self):
+        roi_table = self._roi_table_picker.value
+        roi_name = self._roi_picker.value
+        level = self._level_picker.value
         channels = self._channel_picker.value
         labels = self._label_picker.value
         if len(channels) < 1 and len(labels) < 1:
@@ -222,30 +230,30 @@ class ROILoader(Container):
 
         # Load intensity images
         for channel in channels:
-            self.add_intensity_roi(channel, blending)
+            self.add_intensity_roi(
+                channel, roi_table, roi_name, level, blending
+            )
             blending = "additive"
 
         # Load labels
-        # label_layers = []
-        # for label in labels:
-        #     label_roi, scale_label = load_label_roi(
-        #         zarr_url=self._zarr_url_picker.value,
-        #         roi_of_interest=roi_name,
-        #         label_name=label,
-        #         target_scale=scale_img,
-        #         roi_table=roi_table,
-        #     )
-        #     if not np.any(label_roi):
-        #         show_info(
-        #             "Could not load this ROI. Did you correctly set the "
-        #             "`Reset ROI Origin`?"
-        #         )
-        #         return
-        #     label_layers.append(
-        #         self._viewer.add_labels(
-        #             label_roi, scale=scale_label, name=label
-        #         )
-        #     )
+        # TODO: handle case of no intensity image being present =>
+        # level choice for labels?
+        for label in labels:
+            label_roi, scale_label = self.ome_zarr_image.load_label_roi(
+                roi_table=roi_table,
+                roi_name=roi_name,
+                label=label,
+                level_path_img=level,
+            )
+            # if not np.any(label_roi):
+            #     show_info(
+            #         "Could not load this ROI. Did you correctly set the "
+            #         "`Reset ROI Origin`?"
+            #     )
+            #     return
+            self.label_layers[label] = self._viewer.add_labels(
+                label_roi, scale=scale_label, name=label
+            )
 
 
 class ImageEvent:
