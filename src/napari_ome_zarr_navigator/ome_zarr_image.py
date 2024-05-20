@@ -337,15 +337,15 @@ class OMEZarrImage:
         Load an intensity image from an OME-Zarr
 
         Args:
-        - roi_table: Name of the roi table based on which to load the 
+        - roi_table: Name of the roi table based on which to load the
             intensity roi
-        - roi_name: Name of the region of interest in the roi table to load 
+        - roi_name: Name of the region of interest in the roi table to load
             (based on the .obs index names)
         - channel: Name of the channel to load
         - level_path: Name of the zarr_array of the resolution level to load
 
         Returns:
-            - img_roi: Numpy array of the region of interest of the intensity 
+            - img_roi: Numpy array of the region of interest of the intensity
                 image
             - scale: zyx or yx scale of the loaded image
         """
@@ -419,5 +419,4 @@ class OMEZarrImage:
         for channel in self.image_meta.omero.channels:
             if channel.label == channel_name:
                 return channel
-        return None 
-        
+        return None
