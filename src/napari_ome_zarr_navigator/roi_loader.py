@@ -1,6 +1,7 @@
 import logging
 
 import napari
+import numpy as np
 import zarr
 from magicgui.widgets import (
     ComboBox,
@@ -10,6 +11,7 @@ from magicgui.widgets import (
     Select,
 )
 from napari.qt.threading import thread_worker
+from napari.utils.colormaps import Colormap
 
 from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.utils_roi_loader import (
@@ -163,55 +165,89 @@ class ROILoader(Container):
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
 
-    def run(self):
-        # roi_table = self._roi_table_picker.value
-        # roi_name = self._roi_picker.value
-        # level = self._level_picker.value
-        # channels = self._channel_picker.value
-        # labels = self._label_picker.value
-        # if len(channels) < 1 and len(labels) < 1:
-        #     logger.info(
-        #         "No channel or labels selected. "
-        #         "Select the channels/labels you want to load"
-        #     )
-        #     return
-        # blending = None
-        # scale_img = None
-        print("run")
 
-        # # Load intensity images
-        # for channel in channels:
-        #     img_roi, scale_img = load_intensity_roi(
+    def add_intensity_roi(self, channel: str, blending: str): 
+        roi_table = self._roi_table_picker.value
+        roi_name = self._roi_picker.value
+        level = self._level_picker.value
+        img_roi, scale_img = self.ome_zarr_image.load_intensity_roi(
+            roi_table=roi_table,
+            roi_name=roi_name,
+            channel=channel,
+            level_path=level, # FIXME: pass 
+        )
+        if not np.any(img_roi):
+            return
+
+        # Get channel omero metadata
+        omero = self.ome_zarr_image.get_omero_metadata(channel)
+        try:
+            # Colormap creation needs to have this black initial color for 
+            # background
+            colormap = Colormap(
+                ["#000000", f"#{omero.color}"],
+                name=omero.color,
+            )
+        except AttributeError:
+            colormap = None
+        try:
+            rescaling = (
+                omero.window.start,
+                omero.window.end,
+            )
+        except AttributeError:
+            rescaling = None                        
+
+        self._viewer.add_image(
+            img_roi,
+            scale=scale_img,
+            blending=blending,
+            contrast_limits=rescaling,
+            colormap=colormap,
+            name=channel,
+        )
+        # TODO: Optionally return some values as well? e.g. if info is needed 
+        # by label loading
+        
+
+    def run(self):
+        channels = self._channel_picker.value
+        labels = self._label_picker.value
+        if len(channels) < 1 and len(labels) < 1:
+            logger.info(
+                "No channel or labels selected. "
+                "Select the channels/labels you want to load"
+            )
+            return
+        blending = None
+        # scale_img = None
+
+        # Load intensity images
+        for channel in channels:
+            self.add_intensity_roi(channel, blending)
+            blending = "additive"
+
+        # # Load labels
+        # label_layers = []
+        # for label in labels:
+        #     label_roi, scale_label = load_label_roi(
         #         zarr_url=self._zarr_url_picker.value,
         #         roi_of_interest=roi_name,
-        #         channel_index=self.channel_names_dict[channel],
-        #         level=level,
+        #         label_name=label,
+        #         target_scale=scale_img,
         #         roi_table=roi_table,
         #     )
-        #     if not np.any(img_roi):
-        #         return
-        #     channel_meta = self.channel_dict[self.channel_names_dict[channel]]
-        #     colormap = Colormap(
-        #         ["#000000", f"#{channel_meta['color']}"],
-        #         name=channel_meta["color"],
-        #     )
-        #     try:
-        #         rescaling = (
-        #             channel_meta["window"]["start"],
-        #             channel_meta["window"]["end"],
+        #     if not np.any(label_roi):
+        #         show_info(
+        #             "Could not load this ROI. Did you correctly set the "
+        #             "`Reset ROI Origin`?"
         #         )
-        #     except KeyError:
-        #         rescaling = None
-
-        #     self._viewer.add_image(
-        #         img_roi,
-        #         scale=scale_img,
-        #         blending=blending,
-        #         contrast_limits=rescaling,
-        #         colormap=colormap,
-        #         name=channel,
+        #         return
+        #     label_layers.append(
+        #         self._viewer.add_labels(
+        #             label_roi, scale=scale_label, name=label
+        #         )
         #     )
-        #     blending = "additive"
 
 
 class ImageEvent:
@@ -226,80 +262,6 @@ class ImageEvent:
             handler(*args, **kwargs)
 
     # def run(self):
-    #     roi_table = self._roi_table_picker.value
-    #     roi_name = self._roi_picker.value
-    #     level = self._level_picker.value
-    #     channels = self._channel_picker.value
-    #     labels = self._label_picker.value
-    #     if len(channels) < 1 and len(labels) < 1:
-    #         show_info(
-    #             "No channel or labels selected. "
-    #             "Select the channels/labels you want to load"
-    #         )
-    #         return
-    #     blending = None
-    #     scale_img = None
-
-    #     # Load intensity images
-    #     for channel in channels:
-    #         img_roi, scale_img = load_intensity_roi(
-    #             zarr_url=self._zarr_url_picker.value,
-    #             roi_of_interest=roi_name,
-    #             channel_index=self.channel_names_dict[channel],
-    #             level=level,
-    #             roi_table=roi_table,    #         )
-    #         if not np.any(img_roi):
-    #             show_info(
-    #                 "Could not load this ROI. Did you correctly set the "
-    #                 "`Reset ROI Origin`?"
-    #             )
-    #             return
-
-    #         channel_meta = self.channel_dict[self.channel_names_dict[channel]]
-    #         colormap = Colormap(
-    #             ["#000000", f"#{channel_meta['color']}"],
-    #             name=channel_meta["color"],
-    #         )
-    #         try:
-    #             rescaling = (
-    #                 channel_meta["window"]["start"],
-    #                 channel_meta["window"]["end"],
-    #             )
-    #         except KeyError:
-    #             rescaling = None
-
-    #         self._viewer.add_image(
-    #             img_roi,
-    #             scale=scale_img,
-    #             blending=blending,
-    #             contrast_limits=rescaling,
-    #             colormap=colormap,
-    #             name=channel,
-    #         )
-    #         blending = "additive"
-
-    #     # Load labels
-    #     label_layers = []
-    #     for label in labels:
-    #         label_roi, scale_label = load_label_roi(
-    #             zarr_url=self._zarr_url_picker.value,
-    #             roi_of_interest=roi_name,
-    #             label_name=label,
-    #             target_scale=scale_img,
-    #             roi_table=roi_table,
-    #         )
-    #         if not np.any(label_roi):
-    #             show_info(
-    #                 "Could not load this ROI. Did you correctly set the "
-    #                 "`Reset ROI Origin`?"
-    #             )
-    #             return
-    #         label_layers.append(
-    #             self._viewer.add_labels(
-    #                 label_roi, scale=scale_label, name=label
-    #             )
-    #         )
-
     #     # Load features
     #     # Initially a bearbones implementation that only works when a single
     #     # label image is also loaded at that moment
@@ -365,56 +327,3 @@ class ImageEvent:
     #             "column, can't be loaded as features for the "
     #             f"layer {label_layer}"
     #         )
-
-    # def update_roi_tables(self):
-    #     """
-    #     Handles updating the list of available ROI tables
-    #     """
-    #     # Uses the `_default_choices` to avoid having choices reset.
-    #     # See https://github.com/pyapp-kit/magicgui/issues/306
-    #     # roi_table = self._get_roi_table_choices()
-    #     roi_tables = self._get_table_choices(type="ROIs")
-    #     self._roi_table_picker.choices = roi_tables
-    #     self._roi_table_picker._default_choices = roi_tables
-    #     self.update_roi_selection()
-
-    # def update_roi_selection(self):
-    #     """
-    #     Updates all selections that depend on which ROI table was selected
-    #     """
-    #     # Uses the `_default_choices` to avoid having choices reset.
-    #     # See https://github.com/pyapp-kit/magicgui/issues/306
-    #     new_rois = self._get_roi_choices()
-    #     self._roi_picker.choices = new_rois
-    #     self._roi_picker._default_choices = new_rois
-    #     channels = self._get_channel_choices()
-    #     self._channel_picker.choices = channels
-    #     self._channel_picker._default_choices = channels
-    #     levels = self._get_level_choices()
-    #     self._level_picker.choices = levels
-    #     self._level_picker._default_choices = levels
-
-    #     # Initialize available label images
-    #     labels = self._get_label_choices()
-    #     self._label_picker.choices = labels
-    #     self._label_picker._default_choices = labels
-
-    #     # Initialize available features
-    #     features = self._get_table_choices(type="features")
-    #     self._feature_picker.choices = features
-    #     self._feature_picker._default_choices = features
-
-    # def _get_roi_choices(self):
-    #     if not self._roi_table_picker.value:
-    #         # When no roi table is provided.
-    #         # E.g. during bug with self._roi_table_picker reset
-    #         return [""]
-    #     try:
-    #         roi_table = read_table(
-    #             self._zarr_url_picker.value, self._roi_table_picker.value
-    #         )
-    #         new_choices = list(roi_table.obs_names)
-    #         return new_choices
-    #     except zarr.errors.PathNotFoundError:
-    #         new_choices = [""]
-    #         return new_choices

@@ -332,7 +332,23 @@ class OMEZarrImage:
         roi_name: str,
         channel: str,
         level_path: str = "0",
-    ):
+    ) -> tuple[np.array, int]:
+        """
+        Load an intensity image from an OME-Zarr
+
+        Args:
+        - roi_table: Name of the roi table based on which to load the 
+            intensity roi
+        - roi_name: Name of the region of interest in the roi table to load 
+            (based on the .obs index names)
+        - channel: Name of the channel to load
+        - level_path: Name of the zarr_array of the resolution level to load
+
+        Returns:
+            - img_roi: Numpy array of the region of interest of the intensity 
+                image
+            - scale: zyx or yx scale of the loaded image
+        """
         roi_an = self.read_table(self.zarr_url, roi_table)
         roi_index = roi_an.obs.index.get_loc(roi_name)
 
@@ -389,3 +405,19 @@ class OMEZarrImage:
             multiscale=label_multiscale,
             level_path=level_path,
         )
+
+    def get_omero_metadata(self, channel_name: str):
+        """
+        Get channel metadata from omero metadata
+
+        Args:
+        - channel: name of the channel
+
+        Returns:
+        - channel: fractal_tasks_core.ngff.specs.Channel or None
+        """
+        for channel in self.image_meta.omero.channels:
+            if channel.label == channel_name:
+                return channel
+        return None 
+        
