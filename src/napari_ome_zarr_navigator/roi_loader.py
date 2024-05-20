@@ -165,8 +165,7 @@ class ROILoader(Container):
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
 
-
-    def add_intensity_roi(self, channel: str, blending: str): 
+    def add_intensity_roi(self, channel: str, blending: str):
         roi_table = self._roi_table_picker.value
         roi_name = self._roi_picker.value
         level = self._level_picker.value
@@ -174,7 +173,7 @@ class ROILoader(Container):
             roi_table=roi_table,
             roi_name=roi_name,
             channel=channel,
-            level_path=level, # FIXME: pass 
+            level_path=level,  # FIXME: pass
         )
         if not np.any(img_roi):
             return
@@ -182,7 +181,7 @@ class ROILoader(Container):
         # Get channel omero metadata
         omero = self.ome_zarr_image.get_omero_metadata(channel)
         try:
-            # Colormap creation needs to have this black initial color for 
+            # Colormap creation needs to have this black initial color for
             # background
             colormap = Colormap(
                 ["#000000", f"#{omero.color}"],
@@ -196,7 +195,7 @@ class ROILoader(Container):
                 omero.window.end,
             )
         except AttributeError:
-            rescaling = None                        
+            rescaling = None
 
         self._viewer.add_image(
             img_roi,
@@ -206,9 +205,8 @@ class ROILoader(Container):
             colormap=colormap,
             name=channel,
         )
-        # TODO: Optionally return some values as well? e.g. if info is needed 
+        # TODO: Optionally return some values as well? e.g. if info is needed
         # by label loading
-        
 
     def run(self):
         channels = self._channel_picker.value
@@ -227,7 +225,7 @@ class ROILoader(Container):
             self.add_intensity_roi(channel, blending)
             blending = "additive"
 
-        # # Load labels
+        # Load labels
         # label_layers = []
         # for label in labels:
         #     label_roi, scale_label = load_label_roi(
