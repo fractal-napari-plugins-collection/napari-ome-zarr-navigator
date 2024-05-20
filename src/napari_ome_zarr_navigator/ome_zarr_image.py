@@ -141,7 +141,7 @@ class OMEZarrImage:
 
     def read_table(self, table_name: str, cached=True):
         if cached:
-            return self.read_table(self.zarr_url, table_name)
+            return self._read_table(self.zarr_url, table_name)
         else:
             with zarr.open(self.zarr_url, mode="r").tables[
                 table_name
