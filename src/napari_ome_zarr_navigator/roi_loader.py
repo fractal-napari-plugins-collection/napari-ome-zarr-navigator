@@ -214,6 +214,7 @@ class ROILoader(Container):
         # by label loading
 
     def run(self):
+        # TODO: Handle case of this function being slow: Threadworker?
         roi_table = self._roi_table_picker.value
         roi_name = self._roi_picker.value
         level = self._level_picker.value
@@ -246,13 +247,85 @@ class ROILoader(Container):
                 level_path_img=level,
             )
             # if not np.any(label_roi):
-            #     show_info(
+            #     logger.info(
             #         "Could not load this ROI. Did you correctly set the "
             #         "`Reset ROI Origin`?"
             #     )
             #     return
             self.label_layers[label] = self._viewer.add_labels(
                 label_roi, scale=scale_label, name=label
+            )
+
+        # Load features
+        features = self._feature_picker.value
+        for table_name in features:
+            label_layer = self.find_matching_label_layer(table_name)
+            from devtools import debug
+
+            debug(label_layer)
+            self.add_feature_table_to_layer(
+                table_name,
+                label_layer,
+                roi_name,
+            )
+
+    def find_matching_label_layer(self, table_name):
+        """
+        Finds the matching label layer for a feature table
+        """
+        table_attrs = self.ome_zarr_image.get_table_attrs(table_name)
+        try:
+            target_label_name = table_attrs["region"]["path"].split("/")[-1]
+        except KeyError:
+            target_label_name = list(self.label_layers.keys)[0]
+            logger.info(
+                f"Table {table_name} did not have region metadata to match"
+                "it to the correct label image. Attaching the features to the"
+                f"first selected label layer ({target_label_name})"
+            )
+
+        if target_label_name not in self.label_layers:
+            target_label_name = list(self.label_layers.keys)[0]
+            logger.info(
+                f"The label {target_label_name} that {table_name} would be "
+                "matched to where not loaded. Attaching the features to the"
+                f"first selected label layer ({target_label_name})"
+            )
+
+        return self.label_layers[target_label_name]
+
+    def add_feature_table_to_layer(self, feature_table, label_layer, roi_name):
+        feature_ad = self.ome_zarr_image.read_table(
+            table_name=feature_table,
+        )
+        if "label" in feature_ad.obs:
+            # Cast to numpy array in case the data is lazily loaded as dask
+            labels_current_layer = np.unique(np.array(label_layer.data))[1:]
+            shared_labels = list(
+                set(feature_ad.obs["label"].astype(int))
+                & set(labels_current_layer)
+            )
+            features_roi = feature_ad[
+                feature_ad.obs["label"].astype(int).isin(shared_labels)
+            ]
+            features_df = features_roi.to_df()
+            # Drop duplicate columns
+            features_df = features_df.loc[
+                :, ~features_df.columns.duplicated()
+            ].copy()
+            features_df["label"] = feature_ad.obs["label"].astype(int)
+            features_df[
+                "roi_id"
+            ] = f"{self._zarr_url_picker.value}:ROI_{roi_name}"
+            features_df.set_index("label", inplace=True, drop=False)
+            # To display correct
+            features_df["index"] = features_df["label"]
+            label_layer.features = features_df
+        else:
+            logger.info(
+                f"Table {feature_table} does not have a label obs "
+                "column, can't be loaded as features for the "
+                f"layer {label_layer}"
             )
 
 
@@ -266,70 +339,3 @@ class ImageEvent:
     def emit(self, *args, **kwargs):
         for handler in self.handlers:
             handler(*args, **kwargs)
-
-    # def run(self):
-    #     # Load features
-    #     # Initially a bearbones implementation that only works when a single
-    #     # label image is also loaded at that moment
-    #     features = self._feature_picker.value
-    #     if len(features) > 0:
-    #         if len(labels) != 1:
-    #             show_info(
-    #                 "Not implemented yet: Please select exactly one label "
-    #                 "image to load features for"
-    #             )
-    #             return
-    #         else:
-    #             # TODO: Implement loading multiple features at once
-    #             # (and mapping them to the correct labels)
-    #             if len(features) > 1:
-    #                 show_info(
-    #                     "Not implemented yet: Please select exactly one "
-    #                     "feature to load"
-    #                 )
-    #                 return
-    #             else:
-    #                 # Actual feature loading
-    #                 feature_table = features[0]
-    #                 label_layer = label_layers[0]
-    #                 self.add_feature_table_to_layer(
-    #                     feature_table,
-    #                     label_layer,
-    #                     roi_name,
-    #                 )
-
-    # def add_feature_table_to_layer(self, feature_table, label_layer, roi_name):
-    #     feature_ad = load_features(
-    #         zarr_url=self._zarr_url_picker.value,
-    #         feature_table=feature_table,
-    #     )
-    #     if "label" in feature_ad.obs:
-    #         # TODO: Only load the feature for the ROI,
-    #         # not the whole table
-    #         labels_current_layer = np.unique(label_layer.data)[1:]
-    #         shared_labels = list(
-    #             set(feature_ad.obs["label"].astype(int))
-    #             & set(labels_current_layer)
-    #         )
-    #         features_roi = feature_ad[
-    #             feature_ad.obs["label"].astype(int).isin(shared_labels)
-    #         ]
-    #         features_df = features_roi.to_df()
-    #         # Drop duplicate columns
-    #         features_df = features_df.loc[
-    #             :, ~features_df.columns.duplicated()
-    #         ].copy()
-    #         features_df["label"] = feature_ad.obs["label"].astype(int)
-    #         features_df[
-    #             "roi_id"
-    #         ] = f"{self._zarr_url_picker.value}:ROI_{roi_name}"
-    #         features_df.set_index("label", inplace=True, drop=False)
-    #         # To display correct
-    #         features_df["index"] = features_df["label"]
-    #         label_layer.features = features_df
-    #     else:
-    #         show_info(
-    #             f"Table {feature_table} does not have a label obs "
-    #             "column, can't be loaded as features for the "
-    #             f"layer {label_layer}"
-    #         )
