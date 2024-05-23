@@ -139,11 +139,30 @@ class OMEZarrImage:
             print(f"Path does not exist: {path}")
             return False
 
+    def read_table(self, table_name: str, cached=True):
+        if cached:
+            return self._read_table(self.zarr_url, table_name)
+        else:
+            with zarr.open(self.zarr_url, mode="r").tables[
+                table_name
+            ] as table:
+                return ad.read_zarr(table)
+
     @staticmethod
     @lru_cache(maxsize=16)
-    def read_table(zarr_url, roi_table: str):
-        with zarr.open(zarr_url, mode="r").tables[roi_table] as table:
+    def _read_table(zarr_url: str, table_name: str):
+        """
+        Reads an anndata table
+
+        Cached to avoid multiple reads of the same table. Only the staticmethod
+        is cached to avoid memory leaks.
+        """
+        with zarr.open(zarr_url, mode="r").tables[table_name] as table:
             return ad.read_zarr(table)
+
+    def get_table_attrs(self, table_name: str):
+        with zarr.open(self.zarr_url, mode="r").tables[table_name] as table:
+            return table.attrs.asdict()
 
     def _get_image_scale_zyx_and_index(self, level, multiscale):
         # TODO: Get this back into the NgffImageMeta model:
@@ -252,7 +271,7 @@ class OMEZarrImage:
 
         """
         # Get the ROI table
-        roi_an = self.read_table(self.zarr_url, roi_table)
+        roi_an = self.read_table(roi_table)
 
         # TODO: Switch to a more robust way of loading indices when the
         # dimensionality of the image can vary. This only works for 3D images
@@ -332,8 +351,24 @@ class OMEZarrImage:
         roi_name: str,
         channel: str,
         level_path: str = "0",
-    ):
-        roi_an = self.read_table(self.zarr_url, roi_table)
+    ) -> tuple[np.array, int]:
+        """
+        Load an intensity image from an OME-Zarr
+
+        Args:
+        - roi_table: Name of the roi table based on which to load the
+            intensity roi
+        - roi_name: Name of the region of interest in the roi table to load
+            (based on the .obs index names)
+        - channel: Name of the channel to load
+        - level_path: Name of the zarr_array of the resolution level to load
+
+        Returns:
+            - img_roi: Numpy array of the region of interest of the intensity
+                image
+            - scale: zyx or yx scale of the loaded image
+        """
+        roi_an = self.read_table(roi_table)
         roi_index = roi_an.obs.index.get_loc(roi_name)
 
         # This assumes the order of the omero channels will match the order
@@ -368,7 +403,7 @@ class OMEZarrImage:
         """
         zarr_url_label = f"{self.zarr_url}/labels/{label}"
 
-        roi_an = self.read_table(self.zarr_url, roi_table)
+        roi_an = self.read_table(roi_table)
         roi_index = roi_an.obs.index.get_loc(roi_name)
 
         label_multiscale = load_NgffImageMeta(zarr_url_label).multiscale
@@ -389,3 +424,18 @@ class OMEZarrImage:
             multiscale=label_multiscale,
             level_path=level_path,
         )
+
+    def get_omero_metadata(self, channel_name: str):
+        """
+        Get channel metadata from omero metadata
+
+        Args:
+        - channel: name of the channel
+
+        Returns:
+        - channel: fractal_tasks_core.ngff.specs.Channel or None
+        """
+        for channel in self.image_meta.omero.channels:
+            if channel.label == channel_name:
+                return channel
+        return None

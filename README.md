@@ -36,7 +36,7 @@ To install latest development version :
 
 ## Test data
 
-Test data is available at https://zenodo.org/records/10424292
+Test data is available at https://zenodo.org/records/11262587
 
 
 ## Contributing
