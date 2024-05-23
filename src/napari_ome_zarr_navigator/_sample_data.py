@@ -37,7 +37,7 @@ def download_from_zenodo(
     directory: Union[str, Path] = Path(),
     access_token: str = None,
 ):
-    record_id = re.match(r".*/zenodo.(\w+)", doi).group(1)
+    record_id = re.match(r".*zenodo.(\w+)", doi).group(1)
     url = "https://zenodo.org/api/records/" + record_id
     js = requests.get(url).json()
     doi = js["metadata"]["doi"]
