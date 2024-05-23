@@ -8,6 +8,7 @@ import urllib
 import hashlib
 import wget
 import shutil
+import logging
 
 from napari.types import LayerDataTuple
 
@@ -15,6 +16,8 @@ from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader, Node
 
 from napari_ome_zarr_navigator import _TEST_DATA_DIR
+
+logging.getLogger("ome_zarr").setLevel(logging.WARN)
 
 
 def load_ome_zarr_from_zenodo(doi: str, zarr_url: Union[str, Path]):
@@ -85,7 +88,7 @@ def verify_checksum(filename: Union[str, Path], algorithm, original_checksum):
 
 
 def hiPSC_zarr() -> list[LayerDataTuple]:
-    doi = "10.5281_zenodo.10424292"
+    doi = "10.5281_zenodo.11262587"
     zarr_url = "20200812-CardiomyocyteDifferentiation14-Cycle1_mip.zarr"
     return load_zarr(doi, zarr_url)
 
