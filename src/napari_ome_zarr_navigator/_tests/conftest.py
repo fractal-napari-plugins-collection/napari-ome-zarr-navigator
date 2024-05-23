@@ -23,7 +23,7 @@ def zenodo_zarr(testdata_path: Path) -> list[str]:
     """
 
     # 1 Download Zarrs from Zenodo
-    DOI = "10.5281/zenodo.10424292"
+    DOI = "10.5281/zenodo.11262587"
     DOI_slug = DOI.replace("/", "_").replace(".", "_")
     rootfolder = testdata_path / DOI_slug
 
