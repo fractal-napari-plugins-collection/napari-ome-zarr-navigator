@@ -88,7 +88,7 @@ def verify_checksum(filename: Union[str, Path], algorithm, original_checksum):
 
 
 def hiPSC_zarr() -> list[LayerDataTuple]:
-    doi = "10.5281_zenodo.10424292"
+    doi = "10.5281_zenodo.11262587"
     zarr_url = "20200812-CardiomyocyteDifferentiation14-Cycle1_mip.zarr"
     return load_zarr(doi, zarr_url)
 
