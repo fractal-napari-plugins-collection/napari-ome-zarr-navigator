@@ -85,3 +85,4 @@ venv/
 
 #test data folder
 test_data/
+examples/playground.py

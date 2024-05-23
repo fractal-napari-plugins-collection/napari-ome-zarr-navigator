@@ -3,6 +3,7 @@ import logging
 import napari
 import numpy as np
 import zarr
+from fractal_tasks_core.ngff import load_NgffWellMeta
 from magicgui.widgets import (
     ComboBox,
     Container,
@@ -22,13 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 class ROILoader(Container):
-    def __init__(self, viewer: napari.viewer.Viewer, zarr_url=None):
+    def __init__(
+        self,
+        viewer: napari.viewer.Viewer,
+        zarr_url: str = None,
+        extra_widgets=None,
+    ):
         self._viewer = viewer
+        self.zarr_url = zarr_url
         self.channel_dict = {}
         self.channel_names_dict = {}
         self.labels_dict = {}
         self.label_layers = {}
-        self._zarr_url_picker = FileEdit(label="Zarr URL", mode="d")
         self._roi_table_picker = ComboBox(label="ROI Table")
         self._roi_picker = ComboBox(label="ROI")
         self._channel_picker = Select(
@@ -48,27 +54,24 @@ class ROILoader(Container):
         # Initialize possible choices
 
         # Update selections & bind buttons
-        self._zarr_url_picker.changed.connect(self.update_image_selection)
         self.image_changed.connect(self.update_roi_table_choices)
         self.image_changed.connect(self.update_available_image_attrs)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
         self._run_button.clicked.connect(self.run)
 
-        if zarr_url:
-            self.ome_zarr_image = OMEZarrImage(zarr_url)
+        widgets = [
+            self._roi_table_picker,
+            self._roi_picker,
+            self._channel_picker,
+            self._level_picker,
+            self._label_picker,
+            self._feature_picker,
+            self._run_button,
+        ]
+        if extra_widgets:
+            widgets = extra_widgets + widgets
 
-        super().__init__(
-            widgets=[
-                self._zarr_url_picker,
-                self._roi_table_picker,
-                self._roi_picker,
-                self._channel_picker,
-                self._level_picker,
-                self._label_picker,
-                self._feature_picker,
-                self._run_button,
-            ]
-        )
+        super().__init__(widgets=widgets)
 
     @property
     def ome_zarr_image(self):
@@ -85,7 +88,7 @@ class ROILoader(Container):
         def get_roi_choices():
             try:
                 roi_table = read_table(
-                    self._zarr_url_picker.value, self._roi_table_picker.value
+                    self.zarr_url, self._roi_table_picker.value
                 )
                 new_choices = list(roi_table.obs_names)
                 return new_choices
@@ -130,13 +133,6 @@ class ROILoader(Container):
         """
         self._roi_table_picker.choices = table_list
         self._roi_table_picker._default_choices = table_list
-
-    def update_image_selection(self):
-        zarr_url = self._zarr_url_picker.value
-        try:
-            self.ome_zarr_image = OMEZarrImage(zarr_url)
-        except ValueError:
-            self.ome_zarr_image = None
 
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
@@ -295,6 +291,7 @@ class ROILoader(Container):
         return self.label_layers[target_label_name]
 
     def add_feature_table_to_layer(self, feature_table, label_layer, roi_name):
+        # FIXME: Add case where label layer already contains some columns
         feature_ad = self.ome_zarr_image.read_table(
             table_name=feature_table,
         )
@@ -314,9 +311,7 @@ class ROILoader(Container):
                 :, ~features_df.columns.duplicated()
             ].copy()
             features_df["label"] = feature_ad.obs["label"].astype(int)
-            features_df[
-                "roi_id"
-            ] = f"{self._zarr_url_picker.value}:ROI_{roi_name}"
+            features_df["roi_id"] = f"{self.zarr_url}:ROI_{roi_name}"
             features_df.set_index("label", inplace=True, drop=False)
             # To display correct
             features_df["index"] = features_df["label"]
@@ -327,6 +322,61 @@ class ROILoader(Container):
                 "column, can't be loaded as features for the "
                 f"layer {label_layer}"
             )
+
+
+class ROILoaderImage(ROILoader):
+    def __init__(self, viewer: napari.viewer.Viewer, zarr_url: str = None):
+        self._zarr_url_picker = FileEdit(label="Zarr URL", mode="d")
+        super().__init__(
+            viewer=viewer,
+            extra_widgets=[
+                self._zarr_url_picker,
+            ],
+        )
+        self._zarr_url_picker.changed.connect(self.update_image_selection)
+        if zarr_url:
+            self._zarr_url_picker.value = zarr_url
+
+    def update_image_selection(self):
+        self.zarr_url = self._zarr_url_picker.value
+        try:
+            self.ome_zarr_image = OMEZarrImage(self.zarr_url)
+        except ValueError:
+            self.ome_zarr_image = None
+
+
+class ROILoaderPlate(ROILoader):
+    def __init__(
+        self, viewer: napari.viewer.Viewer, plate_url: str, row: str, col: str
+    ):
+        self._zarr_picker = ComboBox(label="Image")
+        self.plate_url = plate_url.rstrip("/")
+        self.row = row
+        self.col = col
+        super().__init__(
+            viewer=viewer,
+            extra_widgets=[
+                self._zarr_picker,
+            ],
+        )
+        self._zarr_picker.changed.connect(self.update_image_selection)
+        zarr_images = self.get_available_ome_zarr_images()
+        self._zarr_picker.choices = zarr_images
+        self._zarr_picker._default_choices = zarr_images
+
+    def get_available_ome_zarr_images(self):
+        well_url = f"{self.plate_url}/{self.row}/{self.col}"
+        well_meta = load_NgffWellMeta(well_url)
+        return [image.path for image in well_meta.well.images]
+
+    def update_image_selection(self):
+        self.zarr_url = (
+            f"{self.plate_url}/{self.row}/{self.col}/{self._zarr_picker.value}"
+        )
+        try:
+            self.ome_zarr_image = OMEZarrImage(self.zarr_url)
+        except ValueError:
+            self.ome_zarr_image = None
 
 
 class ImageEvent:
