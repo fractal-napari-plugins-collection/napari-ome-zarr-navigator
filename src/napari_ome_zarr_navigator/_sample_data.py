@@ -9,6 +9,7 @@ import hashlib
 import wget
 import shutil
 import logging
+import numpy as np
 
 from napari.types import LayerDataTuple
 
@@ -106,6 +107,7 @@ def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
                     "contrast_limits": ome_zarr.metadata["contrast_limits"],
                     "colormap": ome_zarr.metadata["colormap"],
                     "metadata": {"sample_path": ome_zarr.zarr.path},
+                    "scale": np.array([1.0, 0.1625, 0.1625]),
                 },
                 "image",
             )
