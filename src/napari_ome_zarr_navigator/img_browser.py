@@ -8,12 +8,18 @@ from typing import Union
 from zarr.errors import PathNotFoundError
 import anndata as ad
 import zarr
+import dask.array as da
 import re
 import logging
 
 
 from napari_ome_zarr_navigator.util import alpha_to_numeric
-from fractal_tasks_core.roi import convert_ROI_table_to_indices
+from napari_ome_zarr_navigator.roi_loader import ROILoaderPlate
+
+
+# from fractal_tasks_core.roi import convert_ROI_table_to_indices
+from fractal_tasks_core.ngff import load_NgffImageMeta
+from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
 
 from magicgui.widgets import (
     CheckBox,
@@ -37,14 +43,22 @@ class ImgBrowser(Container):
         self.filters = []
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
         self.select_well = PushButton(text="Go to well", enabled=False)
+        self.btn_load_roi = PushButton(text="Load ROI", enabled=False)
+        self.roi_loader = None
 
         super().__init__(
-            widgets=[self.zarr_dir, self.well, self.select_well],
+            widgets=[
+                self.zarr_dir,
+                self.well,
+                self.select_well,
+                self.btn_load_roi,
+            ],
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
         self.zarr_dir.changed.connect(self.initialize_filters)
         self.zarr_dir.changed.connect(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
+        self.btn_load_roi.clicked.connect(self.load_roi)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def initialize_filters(self):
@@ -100,6 +114,7 @@ class ImgBrowser(Container):
                 self.filter_names = None
 
             self.select_well.enabled = True
+            self.btn_load_roi.enabled = True
 
     def toggle_filter(self, i):
         def toggle_on_change():
@@ -111,6 +126,7 @@ class ImgBrowser(Container):
         if len(self.viewer.layers) == 0:
             self.zarr_dir.value = ""
             self.select_well.enabled = False
+            self.btn_load_roi.enabled = False
             self.df = pd.DataFrame()
             self.well.choices = []
             self.well._default_choices = []
@@ -148,47 +164,66 @@ class ImgBrowser(Container):
             self.well.choices = wells
             self.well._default_choices = wells
 
+    def load_roi(self):
+        matches = [
+            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+        ]
+        row_alpha = [m.group(1) for m in matches]
+        col_str = [m.group(2) for m in matches]
+        if len(row_alpha) > 1 or len(col_str) > 1:
+            msg = "Please select a single well."
+            logger.info(msg)
+            napari.utils.notifications.show_info(msg)
+        else:
+            if self.roi_loader:
+                self.roi_loader.plate_url = str(self.zarr_root)
+                self.roi_loader.row = row_alpha[0]
+                self.roi_loader.col = col_str[0]
+                self.roi_loader.update_image_selection()
+            else:
+                self.roi_loader = ROILoaderPlate(
+                    self.viewer, str(self.zarr_root), row_alpha[0], col_str[0]
+                )
+                self.viewer.window.add_dock_widget(
+                    widget=self.roi_loader, name="ROI Loader"
+                )
+
     def go_to_well(self):
-        row_min = alpha_to_numeric(self.df["row"].min())
-        col_min = int(self.df["col"].min())
+
+        # TODO: deativate go to if only a single plate is loaded
+
         matches = [
             re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
         ]
         wells = [(m.group(1), m.group(2)) for m in matches]
         dataset = 0
         level = 0
+        zarr_url = f"{self.zarr_root}/{wells[0][0]}/{wells[0][1]}/{dataset}"
+        shape = da.from_zarr(f"{zarr_url}/{level}").shape[-2:]
+        image_meta = load_NgffImageMeta(zarr_url)
+        scale = image_meta.get_pixel_sizes_zyx(level=level)[-2:]
+        plate_meta = load_NgffPlateMeta(self.zarr_root)
+        rows = [x.name for x in plate_meta.plate.rows]
+        cols = [x.name for x in plate_meta.plate.columns]
+
+        for layer in self.viewer.layers:
+            if type(layer) == napari.layers.Shapes:
+                self.viewer.layers.remove(layer)
 
         for row_alpha, col_str in wells:
-            row = alpha_to_numeric(row_alpha)
-            col = int(col_str)
-            roi_tbl = load_table(
-                self.zarr_root, "well_ROI_table", f"{row_alpha}{col_str}"
-            )
-            with zarr.open(
-                f"{self.zarr_root}/{row_alpha}/{col_str}/{dataset}"
-            ) as metadata:
-                img_scale = metadata.attrs["multiscales"][dataset]["datasets"][
-                    level
-                ]["coordinateTransformations"][0]["scale"]
-
-            r = convert_ROI_table_to_indices(roi_tbl, img_scale[-3:])[0]
+            row = rows.index(row_alpha)
+            col = cols.index(col_str)
 
             rec = np.array(
                 [
+                    [row * scale[0] * shape[0], col * scale[1] * shape[1]],
                     [
-                        (col - col_min) * (r[3] - r[2]) + r[2],
-                        (row - row_min) * (r[5] - r[4]) + r[4],
-                    ],
-                    [
-                        (col - col_min) * (r[3] - r[2]) + r[3],
-                        (row - row_min) * (r[5] - r[4]) + r[5],
+                        (row + 1) * scale[0] * shape[0],
+                        (col + 1) * scale[1] * shape[1],
                     ],
                 ]
             )
 
-            for layer in self.viewer.layers:
-                if type(layer) == napari.layers.Shapes:
-                    self.viewer.layers.remove(layer)
             self.viewer.add_shapes(
                 rec,
                 shape_type="rectangle",
@@ -197,6 +232,7 @@ class ImgBrowser(Container):
                 face_color="transparent",
                 name=f"{row_alpha}{col_str}",
             )
+
             self.viewer.camera.center = rec.mean(axis=0)
             self.viewer.camera.zoom = 0.25
 
