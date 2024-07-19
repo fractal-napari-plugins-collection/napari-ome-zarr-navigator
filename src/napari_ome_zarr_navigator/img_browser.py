@@ -1,5 +1,6 @@
 import logging
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import Union
 
@@ -41,6 +42,7 @@ class ImgBrowser(Container):
         self.select_well = PushButton(text="Go to well", enabled=False)
         self.btn_load_roi = PushButton(text="Load ROI", enabled=False)
         self.roi_loader = None
+        self.roi_widget = None
 
         super().__init__(
             widgets=[
@@ -88,7 +90,8 @@ class ImgBrowser(Container):
                     layout="vertical",
                 )
                 self.filter_widget = self.viewer.window.add_dock_widget(
-                    widget=self.filters, name="Filters"
+                    widget=self.filters,
+                    name="Filters",
                 )
 
                 for i in range(len(self.filter_names)):
@@ -168,23 +171,24 @@ class ImgBrowser(Container):
         ]
         row_alpha = [m.group(1) for m in matches]
         col_str = [m.group(2) for m in matches]
-        if len(row_alpha) > 1 or len(col_str) > 1:
+        if len(row_alpha) != 1 or len(col_str) != 1:
             msg = "Please select a single well."
             logger.info(msg)
             napari.utils.notifications.show_info(msg)
         else:
-            if self.roi_loader:
-                self.roi_loader.plate_url = str(self.zarr_root)
-                self.roi_loader.row = row_alpha[0]
-                self.roi_loader.col = col_str[0]
-                self.roi_loader.update_image_selection()
-            else:
-                self.roi_loader = ROILoaderPlate(
-                    self.viewer, str(self.zarr_root), row_alpha[0], col_str[0]
-                )
-                self.viewer.window.add_dock_widget(
-                    widget=self.roi_loader, name="ROI Loader"
-                )
+            if self.roi_widget:
+                with suppress(RuntimeError):
+                    self.viewer.window.remove_dock_widget(self.roi_widget)
+
+            self.roi_loader = ROILoaderPlate(
+                self.viewer, str(self.zarr_root), row_alpha[0], col_str[0]
+            )
+            self.roi_widget = self.viewer.window.add_dock_widget(
+                widget=self.roi_loader,
+                name="ROI Loader",
+                tabify=True,
+                allowed_areas=["bottom"],
+            )
 
     def go_to_well(self):
         # TODO: deativate go to if only a single plate is loaded
