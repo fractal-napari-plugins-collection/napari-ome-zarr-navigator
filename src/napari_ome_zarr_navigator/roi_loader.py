@@ -15,6 +15,7 @@ from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
 
 from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
+from napari_ome_zarr_navigator.util import calculate_well_positions
 from napari_ome_zarr_navigator.utils_roi_loader import (
     read_table,
 )
@@ -35,6 +36,10 @@ class ROILoader(Container):
         self.channel_names_dict = {}
         self.labels_dict = {}
         self.label_layers = {}
+
+        # Translation to move position of ROIs loaded
+        self.translation = [0, 0]
+
         self._roi_table_picker = ComboBox(label="ROI Table")
         self._roi_picker = ComboBox(label="ROI")
         self._channel_picker = Select(
@@ -205,6 +210,7 @@ class ROILoader(Container):
             contrast_limits=rescaling,
             colormap=colormap,
             name=channel,
+            translate=self.translation,
         )
         # TODO: Optionally return some values as well? e.g. if info is needed
         # by label loading
@@ -249,7 +255,10 @@ class ROILoader(Container):
             #     )
             #     return
             self.label_layers[label] = self._viewer.add_labels(
-                label_roi, scale=scale_label, name=label
+                label_roi,
+                scale=scale_label,
+                name=label,
+                translate=self.translation,
             )
 
         # Load features
@@ -364,9 +373,12 @@ class ROILoaderPlate(ROILoader):
         self._zarr_picker.choices = zarr_images
         self._zarr_picker._default_choices = zarr_images
 
-        # TODO: Calculate base translation for a given well
-        # Needs top-left corner of the well
-        self.translation = 1
+        # Calculate base translation for a given well
+        self.translation, _ = calculate_well_positions(
+            plate_url=plate_url,
+            row=row,
+            col=col,
+        )
 
         # # Handle defaults for plate loading
         # if "well_ROI_table" in self._roi_table_picker.choices:
