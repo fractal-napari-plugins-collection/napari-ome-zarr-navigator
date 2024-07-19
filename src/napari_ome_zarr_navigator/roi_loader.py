@@ -317,7 +317,7 @@ class ROILoader(Container):
         try:
             target_label_name = table_attrs["region"]["path"].split("/")[-1]
         except KeyError:
-            target_label_name = list(self.label_layers.keys)[0]
+            target_label_name = list(self.label_layers.keys())[0]
             logger.info(
                 f"Table {table_name} did not have region metadata to match"
                 "it to the correct label image. Attaching the features to the"
@@ -325,7 +325,7 @@ class ROILoader(Container):
             )
 
         if target_label_name not in self.label_layers:
-            target_label_name = list(self.label_layers.keys)[0]
+            target_label_name = list(self.label_layers.keys())[0]
             logger.info(
                 f"The label {target_label_name} that {table_name} would be "
                 "matched to where not loaded. Attaching the features to the"

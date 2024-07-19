@@ -43,6 +43,7 @@ class ImgBrowser(Container):
         self.btn_load_roi = PushButton(text="Load ROI", enabled=False)
         self.roi_loader = None
         self.roi_widget = None
+        self.filter_widget = None
 
         super().__init__(
             widgets=[
@@ -89,6 +90,12 @@ class ImgBrowser(Container):
                     ],
                     layout="vertical",
                 )
+                if self.filter_widget:
+                    with suppress(RuntimeError):
+                        self.viewer.window.remove_dock_widget(
+                            self.filter_widget
+                        )
+
                 self.filter_widget = self.viewer.window.add_dock_widget(
                     widget=self.filters,
                     name="Filters",
