@@ -351,6 +351,7 @@ class OMEZarrImage:
         roi_name: str,
         channel: str,
         level_path: str = "0",
+        as_np: bool = True,
     ) -> tuple[np.array, int]:
         """
         Load an intensity image from an OME-Zarr
@@ -362,6 +363,8 @@ class OMEZarrImage:
             (based on the .obs index names)
         - channel: Name of the channel to load
         - level_path: Name of the zarr_array of the resolution level to load
+        - as_np: Whether to return the array as a lazy dask array or a numpy
+            array
 
         Returns:
             - img_roi: Numpy array of the region of interest of the intensity
@@ -384,6 +387,7 @@ class OMEZarrImage:
             subset=channel_index,
             multiscale=self.image_meta.multiscale,
             level_path=level_path,
+            as_np=as_np,
         )
 
     def load_label_roi(
@@ -393,6 +397,7 @@ class OMEZarrImage:
         label: str,
         level_path_img: str = "0",
         level_path_label: Optional[str] = None,
+        as_np=True,
     ):
         """
         Load a label image ROI.
@@ -423,6 +428,7 @@ class OMEZarrImage:
             roi_index=roi_index,
             multiscale=label_multiscale,
             level_path=level_path,
+            as_np=as_np,
         )
 
     def get_omero_metadata(self, channel_name: str):
