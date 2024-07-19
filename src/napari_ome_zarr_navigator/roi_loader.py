@@ -364,6 +364,10 @@ class ROILoaderPlate(ROILoader):
         self._zarr_picker.choices = zarr_images
         self._zarr_picker._default_choices = zarr_images
 
+        # # Handle defaults for plate loading
+        # if "well_ROI_table" in self._roi_table_picker.choices:
+        #     self._roi_table_picker.value = "well_ROI_table"
+
     def get_available_ome_zarr_images(self):
         well_url = f"{self.plate_url}/{self.row}/{self.col}"
         well_meta = load_NgffWellMeta(well_url)
