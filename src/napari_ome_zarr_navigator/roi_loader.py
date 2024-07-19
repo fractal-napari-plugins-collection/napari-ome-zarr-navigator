@@ -224,16 +224,18 @@ class ROILoader(Container):
         except AttributeError:
             rescaling = None
 
-        # FIXME: Only add if it doesn't exist in the viewer yet
-        self._viewer.add_image(
-            img_roi,
-            scale=scale_img,
-            blending=blending,
-            contrast_limits=rescaling,
-            colormap=colormap,
-            name=layer_name,
-            translate=translate,
-        )
+        if layer_name in self._viewer.layers:
+            logger.info(f"{layer_name} is already loaded")
+        else:
+            self._viewer.add_image(
+                img_roi,
+                scale=scale_img,
+                blending=blending,
+                contrast_limits=rescaling,
+                colormap=colormap,
+                name=layer_name,
+                translate=translate,
+            )
         # TODO: Optionally return some values as well? e.g. if info is needed
         # by label loading
 
@@ -290,13 +292,16 @@ class ROILoader(Container):
                 level_path_img=level,
             )
 
-            # FIXME: Only add if it doesn't exist in the viewer yet
-            self.label_layers[label] = self._viewer.add_labels(
-                label_roi,
-                scale=scale_label,
-                name=f"{layer_base_name}{label}",
-                translate=roi_translation,
-            )
+            layer_name = f"{layer_base_name}{label}"
+            if layer_name in self._viewer.layers:
+                logger.info(f"{layer_name} is already loaded")
+            else:
+                self.label_layers[label] = self._viewer.add_labels(
+                    label_roi,
+                    scale=scale_label,
+                    name=layer_name,
+                    translate=roi_translation,
+                )
 
         # Load features
         features = self._feature_picker.value
