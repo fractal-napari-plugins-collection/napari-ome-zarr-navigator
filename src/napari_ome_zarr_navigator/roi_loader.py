@@ -17,10 +17,12 @@ from napari.utils.colormaps import Colormap
 from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.util import calculate_well_positions
 from napari_ome_zarr_navigator.utils_roi_loader import (
+    NapariHandler,
     read_table,
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class ROILoader(Container):
@@ -31,6 +33,7 @@ class ROILoader(Container):
         extra_widgets=None,
     ):
         self._viewer = viewer
+        self.setup_logging()
         self.zarr_url = zarr_url
         self.channel_dict = {}
         self.channel_names_dict = {}
@@ -88,6 +91,21 @@ class ROILoader(Container):
         if self._ome_zarr_image != value:
             self._ome_zarr_image = value
             self.image_changed.emit(self._ome_zarr_image)
+
+    def setup_logging(self):
+        for handler in logger.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        # Create a custom handler for napari
+        napari_handler = NapariHandler()
+        napari_handler.setLevel(logging.INFO)
+
+        # Optionally, set a formatter for the handler
+        # formatter = logging.Formatter(
+        #     '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        # )
+        # napari_handler.setFormatter(formatter)
+
+        logger.addHandler(napari_handler)
 
     def update_roi_selection(self):
         @thread_worker
@@ -206,6 +224,7 @@ class ROILoader(Container):
         except AttributeError:
             rescaling = None
 
+        # FIXME: Only add if it doesn't exist in the viewer yet
         self._viewer.add_image(
             img_roi,
             scale=scale_img,
@@ -271,6 +290,7 @@ class ROILoader(Container):
                 level_path_img=level,
             )
 
+            # FIXME: Only add if it doesn't exist in the viewer yet
             self.label_layers[label] = self._viewer.add_labels(
                 label_roi,
                 scale=scale_label,
@@ -281,6 +301,7 @@ class ROILoader(Container):
         # Load features
         features = self._feature_picker.value
         for table_name in features:
+            # FIXME: Check if no label type or no match
             label_layer = self.find_matching_label_layer(table_name)
             self.add_feature_table_to_layer(
                 table_name,

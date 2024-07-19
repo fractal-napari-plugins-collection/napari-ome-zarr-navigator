@@ -5,6 +5,7 @@ from pathlib import Path
 import anndata as ad
 import zarr
 from napari.qt.threading import thread_worker
+from napari.utils.notifications import show_info
 
 
 @lru_cache(maxsize=16)
@@ -66,3 +67,9 @@ def threaded_get_table_list(zarr_url, table_type: str = None, strict=False):
         table_type=table_type,
         strict=strict,
     )
+
+
+class NapariHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        show_info(log_entry)
