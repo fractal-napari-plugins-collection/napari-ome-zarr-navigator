@@ -364,6 +364,10 @@ class ROILoaderPlate(ROILoader):
         self._zarr_picker.choices = zarr_images
         self._zarr_picker._default_choices = zarr_images
 
+        # TODO: Calculate base translation for a given well
+        # Needs top-left corner of the well
+        self.translation = 1
+
         # # Handle defaults for plate loading
         # if "well_ROI_table" in self._roi_table_picker.choices:
         #     self._roi_table_picker.value = "well_ROI_table"

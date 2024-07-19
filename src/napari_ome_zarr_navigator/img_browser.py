@@ -1,26 +1,15 @@
-from typing import TYPE_CHECKING
-import napari
-
-import numpy as np
-import pandas as pd
+import logging
+import re
 from pathlib import Path
 from typing import Union
-from zarr.errors import PathNotFoundError
+
 import anndata as ad
+import napari
+import numpy as np
+import pandas as pd
 import zarr
-import dask.array as da
-import re
-import logging
-
-
-from napari_ome_zarr_navigator.util import alpha_to_numeric
-from napari_ome_zarr_navigator.roi_loader import ROILoaderPlate
-
 
 # from fractal_tasks_core.roi import convert_ROI_table_to_indices
-from fractal_tasks_core.ngff import load_NgffImageMeta
-from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
-
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -28,6 +17,13 @@ from magicgui.widgets import (
     FileEdit,
     PushButton,
     Select,
+)
+from zarr.errors import PathNotFoundError
+
+from napari_ome_zarr_navigator.roi_loader import ROILoaderPlate
+from napari_ome_zarr_navigator.util import (
+    alpha_to_numeric,
+    calculate_well_positions,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,14 +74,16 @@ class ImgBrowser(Container):
                         Container(
                             widgets=[
                                 ComboBox(
-                                    choices=sorted(self.df[filter].unique()),
+                                    choices=sorted(
+                                        self.df[filter_name].unique()
+                                    ),
                                     enabled=False,
                                 ),
-                                CheckBox(label=filter, value=False),
+                                CheckBox(label=filter_name, value=False),
                             ],
                             layout="horizontal",
                         )
-                        for filter in self.filter_names
+                        for filter_name in self.filter_names
                     ],
                     layout="vertical",
                 )
@@ -189,52 +187,34 @@ class ImgBrowser(Container):
                 )
 
     def go_to_well(self):
-
         # TODO: deativate go to if only a single plate is loaded
-
         matches = [
             re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
         ]
         wells = [(m.group(1), m.group(2)) for m in matches]
-        dataset = 0
-        level = 0
-        zarr_url = f"{self.zarr_root}/{wells[0][0]}/{wells[0][1]}/{dataset}"
-        shape = da.from_zarr(f"{zarr_url}/{level}").shape[-2:]
-        image_meta = load_NgffImageMeta(zarr_url)
-        scale = image_meta.get_pixel_sizes_zyx(level=level)[-2:]
-        plate_meta = load_NgffPlateMeta(self.zarr_root)
-        rows = [x.name for x in plate_meta.plate.rows]
-        cols = [x.name for x in plate_meta.plate.columns]
 
         for layer in self.viewer.layers:
-            if type(layer) == napari.layers.Shapes:
+            if type(layer) == napari.layers.Shapes and re.match(
+                r"([A-Z]+)(\d+)", layer.name
+            ):
                 self.viewer.layers.remove(layer)
 
-        for row_alpha, col_str in wells:
-            row = rows.index(row_alpha)
-            col = cols.index(col_str)
-
-            rec = np.array(
-                [
-                    [row * scale[0] * shape[0], col * scale[1] * shape[1]],
-                    [
-                        (row + 1) * scale[0] * shape[0],
-                        (col + 1) * scale[1] * shape[1],
-                    ],
-                ]
+        for well in wells:
+            top_left_corner, bottom_right_corner = calculate_well_positions(
+                plate_url=self.zarr_root, row=well[0], col=well[1]
             )
-
+            rec = np.array([top_left_corner, bottom_right_corner])
             self.viewer.add_shapes(
                 rec,
                 shape_type="rectangle",
                 edge_width=10,
                 edge_color="white",
                 face_color="transparent",
-                name=f"{row_alpha}{col_str}",
+                name=f"{well[0]}{well[1]}",
             )
 
-            self.viewer.camera.center = rec.mean(axis=0)
-            self.viewer.camera.zoom = 0.25
+        self.viewer.camera.center = rec.mean(axis=0)
+        self.viewer.camera.zoom = 0.25
 
 
 def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
@@ -293,7 +273,7 @@ def load_table(
     """
     wells = _validate_wells(wells, zarr_url)
     wells_str = [f"{w[0]}{w[1]}" for w in wells]
-    tbl = list()
+    tbl = []
     while wells:
         row_alpha, col = wells.pop()
         try:
@@ -328,12 +308,12 @@ def _validate_wells(
     if wells is not None:
         wells = [wells] if isinstance(wells, str) else wells
         matches = [re.match(r"([A-Z]+)(\d+)", well) for well in wells]
-        wells = set([(m.group(1), m.group(2)) for m in matches])
+        wells = {(m.group(1), m.group(2)) for m in matches}
     else:
         with zarr.open(zarr_url) as metadata:
             matches = [
                 re.match(r"([A-Z]+)/(\d+)", well["path"])
                 for well in metadata.attrs["plate"]["wells"]
             ]
-            wells = set([(m.group(1), m.group(2)) for m in matches])
+            wells = {(m.group(1), m.group(2)) for m in matches}
     return wells
