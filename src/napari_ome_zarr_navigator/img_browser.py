@@ -218,7 +218,7 @@ class ImgBrowser(Container):
             self.viewer.add_shapes(
                 rec,
                 shape_type="rectangle",
-                edge_width=10,
+                edge_width=5,
                 edge_color="white",
                 face_color="transparent",
                 name=f"{well[0]}{well[1]}",
