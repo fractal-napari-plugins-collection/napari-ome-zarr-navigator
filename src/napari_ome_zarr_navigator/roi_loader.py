@@ -38,7 +38,8 @@ class ROILoader(Container):
         self.label_layers = {}
 
         # Translation to move position of ROIs loaded
-        self.translation = [0, 0]
+        self.translation = (0, 0)
+        self.layer_base_name = ""
 
         self._roi_table_picker = ComboBox(label="ROI Table")
         self._roi_picker = ComboBox(label="ROI")
@@ -174,12 +175,14 @@ class ROILoader(Container):
         roi_name: str,
         level: str,
         blending: str,
+        translate: tuple[float, float],
+        layer_name: str = "",
     ):
         img_roi, scale_img = self.ome_zarr_image.load_intensity_roi(
             roi_table=roi_table,
             roi_name=roi_name,
             channel=channel,
-            level_path=level,  # FIXME: pass
+            level_path=level,
         )
         if not np.any(img_roi):
             return
@@ -209,8 +212,8 @@ class ROILoader(Container):
             blending=blending,
             contrast_limits=rescaling,
             colormap=colormap,
-            name=channel,
-            translate=self.translation,
+            name=layer_name,
+            translate=translate,
         )
         # TODO: Optionally return some values as well? e.g. if info is needed
         # by label loading
@@ -229,12 +232,31 @@ class ROILoader(Container):
             )
             return
         blending = None
+
+        # Get translation within the larger image based on the ROI table
+        roi_df = self.ome_zarr_image.read_table(roi_table).to_df()
+        roi_translation = (
+            self.translation[0] + roi_df.loc[roi_name, "y_micrometer"],
+            self.translation[1] + roi_df.loc[roi_name, "x_micrometer"],
+        )
         # scale_img = None
+
+        # Set layer names
+        if roi_df.shape[0] == 1:
+            layer_base_name = self.layer_base_name
+        else:
+            layer_base_name = f"{self.layer_base_name}{roi_name}_"
 
         # Load intensity images
         for channel in channels:
             self.add_intensity_roi(
-                channel, roi_table, roi_name, level, blending
+                channel,
+                roi_table,
+                roi_name,
+                level,
+                blending,
+                translate=roi_translation,
+                layer_name=f"{layer_base_name}{channel}",
             )
             blending = "additive"
 
@@ -248,26 +270,18 @@ class ROILoader(Container):
                 label=label,
                 level_path_img=level,
             )
-            # if not np.any(label_roi):
-            #     logger.info(
-            #         "Could not load this ROI. Did you correctly set the "
-            #         "`Reset ROI Origin`?"
-            #     )
-            #     return
+
             self.label_layers[label] = self._viewer.add_labels(
                 label_roi,
                 scale=scale_label,
-                name=label,
-                translate=self.translation,
+                name=f"{layer_base_name}{label}",
+                translate=roi_translation,
             )
 
         # Load features
         features = self._feature_picker.value
         for table_name in features:
             label_layer = self.find_matching_label_layer(table_name)
-            from devtools import debug
-
-            debug(label_layer)
             self.add_feature_table_to_layer(
                 table_name,
                 label_layer,
@@ -368,6 +382,7 @@ class ROILoaderPlate(ROILoader):
                 self._zarr_picker,
             ],
         )
+        self.layer_base_name = f"{row}{col}_{self.layer_base_name}"
         self._zarr_picker.changed.connect(self.update_image_selection)
         zarr_images = self.get_available_ome_zarr_images()
         self._zarr_picker.choices = zarr_images
