@@ -1,4 +1,4 @@
-# napari-ome-zarr-navigator
+# napari-ome-zarr-navigator <img align="right" height="150" src="https://raw.githubusercontent.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/master/docs/images/navigator_logo.png">
 
 [![License BSD-3](https://img.shields.io/pypi/l/napari-ome-zarr-navigator.svg?color=green)](https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator/raw/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/napari-ome-zarr-navigator.svg?color=green)](https://pypi.org/project/napari-ome-zarr-navigator)
