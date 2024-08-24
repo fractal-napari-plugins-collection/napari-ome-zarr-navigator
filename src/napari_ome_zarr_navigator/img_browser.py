@@ -9,13 +9,12 @@ import napari
 import numpy as np
 import pandas as pd
 import zarr
-
-# from fractal_tasks_core.roi import convert_ROI_table_to_indices
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
     FileEdit,
+    FloatSpinBox,
     PushButton,
     Select,
 )
@@ -39,8 +38,11 @@ class ImgBrowser(Container):
         )
         self.filters = []
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
-        self.select_well = PushButton(text="Go to well", enabled=False)
-        self.btn_load_roi = PushButton(text="Load ROI", enabled=False)
+        self.select_well = PushButton(text="➡ Go to well", enabled=False)
+        self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
+        self.btn_load_roi = PushButton(
+            text="Activate ROI Loader", enabled=False
+        )
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
@@ -49,7 +51,11 @@ class ImgBrowser(Container):
             widgets=[
                 self.zarr_dir,
                 self.well,
-                self.select_well,
+                Container(
+                    widgets=[self.zoom_level, self.select_well],
+                    label="Zoom level",
+                    layout="horizontal",
+                ),
                 self.btn_load_roi,
             ],
         )
@@ -70,16 +76,16 @@ class ImgBrowser(Container):
                 zarr_dict["well"],
             )
             if adt:
-                self.df = adt.to_df()
+                self.df = adt.to_df().apply(pd.to_numeric, errors="ignore")
                 self.filter_names = self.df.columns.drop(["row", "col"])
                 self.filters = Container(
                     widgets=[
                         Container(
                             widgets=[
                                 ComboBox(
-                                    choices=sorted(
-                                        self.df[filter_name].unique()
-                                    ),
+                                    choices=self.df[filter_name]
+                                    .sort_values()
+                                    .unique(),
                                     enabled=False,
                                 ),
                                 CheckBox(label=filter_name, value=False),
@@ -168,9 +174,13 @@ class ImgBrowser(Container):
             ).min()
 
             tbl = self.df.loc[and_filter]
-            wells = (tbl["row"] + tbl["col"].astype(str)).sort_values()
+            wells = (
+                (tbl["row"] + tbl["col"].astype(str)).sort_values().unique()
+            )
             self.well.choices = wells
             self.well._default_choices = wells
+            if len(wells) > 0:
+                self.well.value = wells[0]
 
     def load_roi(self):
         matches = [
@@ -198,7 +208,6 @@ class ImgBrowser(Container):
             )
 
     def go_to_well(self):
-        # TODO: deativate go to if only a single plate is loaded
         matches = [
             re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
         ]
@@ -210,22 +219,30 @@ class ImgBrowser(Container):
             ):
                 self.viewer.layers.remove(layer)
 
-        for well in wells:
-            top_left_corner, bottom_right_corner = calculate_well_positions(
-                plate_url=self.zarr_root, row=well[0], col=well[1]
-            )
-            rec = np.array([top_left_corner, bottom_right_corner])
-            self.viewer.add_shapes(
-                rec,
-                shape_type="rectangle",
-                edge_width=5,
-                edge_color="white",
-                face_color="transparent",
-                name=f"{well[0]}{well[1]}",
-            )
+        if len(wells) > 0:
+            for well in wells:
+                (
+                    top_left_corner,
+                    bottom_right_corner,
+                ) = calculate_well_positions(
+                    plate_url=self.zarr_root, row=well[0], col=well[1]
+                )
+                rec = np.array([top_left_corner, bottom_right_corner])
+                self.viewer.add_shapes(
+                    rec,
+                    shape_type="rectangle",
+                    edge_width=5,
+                    edge_color="white",
+                    face_color="transparent",
+                    name=f"{well[0]}{well[1]}",
+                )
 
-        self.viewer.camera.center = rec.mean(axis=0)
-        self.viewer.camera.zoom = 0.25
+            self.viewer.camera.center = rec.mean(axis=0)
+            self.viewer.camera.zoom = self.zoom_level.value
+        else:
+            msg = "Please select at least one well"
+            logger.info(msg)
+            napari.utils.notifications.show_info(msg)
 
 
 def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
