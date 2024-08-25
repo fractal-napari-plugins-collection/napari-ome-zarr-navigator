@@ -15,6 +15,7 @@ from magicgui.widgets import (
     Container,
     FileEdit,
     FloatSpinBox,
+    ProgressBar,
     PushButton,
     Select,
 )
@@ -41,16 +42,18 @@ class ImgBrowser(Container):
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
         self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
         self.btn_load_roi = PushButton(
-            text="Activate ROI Loader", enabled=False
+            text="Send to ROI Loader ⤵️", enabled=False
         )
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
+        self.progress = ProgressBar()
 
         super().__init__(
             widgets=[
                 self.zarr_dir,
                 self.well,
+                self.progress,
                 Container(
                     widgets=[self.zoom_level, self.select_well],
                     label="Zoom level",
@@ -67,23 +70,22 @@ class ImgBrowser(Container):
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def initialize_filters(self):
-        zarr_dict = parse_zarr_url(self.zarr_dir.value)
-        self.zarr_root = zarr_dict["root"]
+        self.zarr_dict = parse_zarr_url(self.zarr_dir.value)
+        self.zarr_root = self.zarr_dict["root"]
         if self.zarr_root:
-            adt = load_table(
-                self.zarr_root,
-                "condition",
-                zarr_dict["well"],
-            )
+            adt = self.load_table()
             if adt:
-                self.df = adt.to_df().apply(pd.to_numeric, errors="ignore")
-                self.filter_names = self.df.columns.drop(["row", "col"])
+                self.df = adt.to_df()
+                self.df_without_pk = self.df.drop(
+                    columns=["row", "col"]
+                ).apply(pd.to_numeric, errors="ignore")
+                self.filter_names = self.df_without_pk.columns
                 self.filters = Container(
                     widgets=[
                         Container(
                             widgets=[
                                 ComboBox(
-                                    choices=self.df[filter_name]
+                                    choices=self.df_without_pk[filter_name]
                                     .sort_values()
                                     .unique(),
                                     enabled=False,
@@ -115,7 +117,7 @@ class ImgBrowser(Container):
                 msg = "No condition table is present in the OME-ZARR."
                 logger.info(msg)
                 napari.utils.notifications.show_info(msg)
-                wells = _validate_wells(None, self.zarr_dir.value)
+                wells = _validate_wells(self.zarr_dir.value, None)
                 wells_str = sorted([f"{w[0]}{w[1]}" for w in wells])
                 self.well.choices = wells_str
                 self.well._default_choices = wells_str
@@ -204,7 +206,7 @@ class ImgBrowser(Container):
                 widget=self.roi_loader,
                 name="ROI Loader",
                 tabify=True,
-                allowed_areas=["bottom"],
+                allowed_areas=["right"],
             )
 
     def go_to_well(self):
@@ -244,6 +246,35 @@ class ImgBrowser(Container):
             logger.info(msg)
             napari.utils.notifications.show_info(msg)
 
+    def load_table(self):
+        wells = _validate_wells(self.zarr_root, self.zarr_dict["well"])
+        wells_str = [f"{w[0]}{w[1]}" for w in wells]
+        tbl = []
+        n = len(wells)
+        self.progress.min = 0
+        self.progress.max = n
+        self.progress.value = 0
+        name = "condition"
+        dataset = 0
+        while wells:
+            row_alpha, col = wells.pop()
+            try:
+                tbl.append(
+                    ad.read_zarr(
+                        f"{self.zarr_root}/{row_alpha}/{col}/{dataset}/tables/{name}"
+                    )
+                )
+            except PathNotFoundError:
+                logger.info(
+                    f'The table "{name}" was not found in well {row_alpha}{col}'
+                )
+            self.progress.value += 1
+        if tbl:
+            if len(wells_str) > 1:
+                return ad.concat(tbl, keys=wells_str, index_unique="-")
+            else:
+                return ad.concat(tbl)
+
 
 def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
     """Parse the OME-ZARR URL into a dictionary with the root URL, row, column and dataset
@@ -282,53 +313,14 @@ def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
     return zarr_dict
 
 
-def load_table(
-    zarr_url: Union[str, Path],
-    name: str,
-    wells: Union[str, list[str]] = None,
-    dataset: int = 0,
-) -> ad.AnnData:
-    """Load an Anndata table from a OME-ZARR URL
-
-    Args:
-        zarr_url: Path to the OME-ZARR
-        name: Name of the table
-        wells: A single well or a list of wells on a plate
-        dataset: Index of the dataset
-
-    Returns:
-        An Anndata table with columns x/y/z_micrometer, len_x/y/z_micrometer and x/y_micrometer_original
-    """
-    wells = _validate_wells(wells, zarr_url)
-    wells_str = [f"{w[0]}{w[1]}" for w in wells]
-    tbl = []
-    while wells:
-        row_alpha, col = wells.pop()
-        try:
-            tbl.append(
-                ad.read_zarr(
-                    f"{zarr_url}/{row_alpha}/{col}/{dataset}/tables/{name}"
-                )
-            )
-        except PathNotFoundError:
-            logger.info(
-                f'The table "{name}" was not found in well {row_alpha}{col}'
-            )
-    if tbl:
-        if len(wells_str) > 1:
-            return ad.concat(tbl, keys=wells_str, index_unique="-")
-        else:
-            return ad.concat(tbl)
-
-
 def _validate_wells(
-    wells: Union[str, list[str]], zarr_url: Union[str, Path]
+    zarr_url: Union[str, Path], wells: Union[str, list[str], None]
 ) -> set[tuple[str, int]]:
     """Check that wells are formatted correctly
 
     Args:
-        wells: A single well or a list of wells on a plate
         zarr_url: Path to the OME-ZARR
+        wells: A single well, a list of wells on a plate or None
 
     Returns:
         A unique set of alphanumeric tuples describing the wells
