@@ -422,6 +422,11 @@ class OMEZarrImage:
                 img_multiscale=self.image_meta.multiscale,
             )
 
+        # Hacky way to address
+        # https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/issues/14
+        # Handle 4D label arrays
+        subset = 0 if label_multiscale.axes[0].name == "c" else None
+
         return self.load_zarr_array_index_based(
             zarr_url=zarr_url_label,
             roi_table=roi_table,
@@ -429,6 +434,7 @@ class OMEZarrImage:
             multiscale=label_multiscale,
             level_path=level_path,
             as_np=as_np,
+            subset=subset,
         )
 
     def get_omero_metadata(self, channel_name: str):
