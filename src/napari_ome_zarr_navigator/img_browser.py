@@ -79,6 +79,9 @@ class ImgBrowser(Container):
                 self.df_without_pk = self.df.drop(
                     columns=["row", "col"]
                 ).apply(pd.to_numeric, errors="ignore")
+                self.df = pd.concat(
+                    (self.df[["row", "col"]], self.df_without_pk), axis=1
+                )
                 self.filter_names = self.df_without_pk.columns
                 self.filters = Container(
                     widgets=[
