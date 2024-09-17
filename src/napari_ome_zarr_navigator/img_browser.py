@@ -47,7 +47,7 @@ class ImgBrowser(Container):
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
-        self.progress = ProgressBar()
+        self.progress = ProgressBar(visible=False)
 
         super().__init__(
             widgets=[
@@ -251,6 +251,7 @@ class ImgBrowser(Container):
         wells_str = [f"{w[0]}{w[1]}" for w in wells]
         tbl = []
         n = len(wells)
+        self.progress.visible = True
         self.progress.min = 0
         self.progress.max = n
         self.progress.value = 0
@@ -269,6 +270,7 @@ class ImgBrowser(Container):
                     f'The table "{name}" was not found in well {row_alpha}{col}'
                 )
             self.progress.value += 1
+        self.progress.visible = False
         if tbl:
             if len(wells_str) > 1:
                 return ad.concat(tbl, keys=wells_str, index_unique="-")
