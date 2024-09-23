@@ -75,7 +75,9 @@ class ImgBrowser(Container):
         if self.zarr_root:
             adt = self.load_table()
             if adt:
-                self.df = adt.to_df()
+                self.df = adt.to_df()  # keep for backwards compatibility
+                if self.df.empty:
+                    self.df = adt.obs
                 self.df_without_pk = self.df.drop(
                     columns=["row", "col"]
                 ).apply(pd.to_numeric, errors="ignore")
@@ -120,7 +122,7 @@ class ImgBrowser(Container):
                 msg = "No condition table is present in the OME-ZARR."
                 logger.info(msg)
                 napari.utils.notifications.show_info(msg)
-                wells = _validate_wells(self.zarr_dir.value, None)
+                wells = _validate_wells(self.zarr_root, self.zarr_dict["well"])
                 wells_str = sorted([f"{w[0]}{w[1]}" for w in wells])
                 self.well.choices = wells_str
                 self.well._default_choices = wells_str
@@ -131,6 +133,7 @@ class ImgBrowser(Container):
                     }
                 )
                 self.filter_names = None
+                self.well.value = wells_str[0]
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
