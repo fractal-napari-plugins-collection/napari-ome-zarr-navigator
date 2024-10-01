@@ -1,10 +1,13 @@
 import logging
+import re
 
 import napari
+import napari.layers
 import numpy as np
 import zarr
 from fractal_tasks_core.ngff import load_NgffWellMeta
 from magicgui.widgets import (
+    CheckBox,
     ComboBox,
     Container,
     FileEdit,
@@ -38,7 +41,6 @@ class ROILoader(Container):
         self.channel_dict = {}
         self.channel_names_dict = {}
         self.labels_dict = {}
-        self.label_layers = {}
 
         # Translation to move position of ROIs loaded
         self.translation = (0, 0)
@@ -55,6 +57,9 @@ class ROILoader(Container):
         )
         self._feature_picker = Select(
             label="Features",
+        )
+        self._remove_old_labels_box = CheckBox(
+            value=False, text="Remove existing labels"
         )
         self._run_button = PushButton(value=False, text="Load ROI")
 
@@ -75,6 +80,7 @@ class ROILoader(Container):
             self._level_picker,
             self._label_picker,
             self._feature_picker,
+            self._remove_old_labels_box,
             self._run_button,
         ]
         if extra_widgets:
@@ -186,59 +192,6 @@ class ROILoader(Container):
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
 
-    def add_intensity_roi(
-        self,
-        channel: str,
-        roi_table: str,
-        roi_name: str,
-        level: str,
-        blending: str,
-        translate: tuple[float, float],
-        layer_name: str = "",
-    ):
-        img_roi, scale_img = self.ome_zarr_image.load_intensity_roi(
-            roi_table=roi_table,
-            roi_name=roi_name,
-            channel=channel,
-            level_path=level,
-        )
-        if not np.any(img_roi):
-            return
-
-        # Get channel omero metadata
-        omero = self.ome_zarr_image.get_omero_metadata(channel)
-        try:
-            # Colormap creation needs to have this black initial color for
-            # background
-            colormap = Colormap(
-                ["#000000", f"#{omero.color}"],
-                name=omero.color,
-            )
-        except AttributeError:
-            colormap = None
-        try:
-            rescaling = (
-                omero.window.start,
-                omero.window.end,
-            )
-        except AttributeError:
-            rescaling = None
-
-        if layer_name in self._viewer.layers:
-            logger.info(f"{layer_name} is already loaded")
-        else:
-            self._viewer.add_image(
-                img_roi,
-                scale=scale_img,
-                blending=blending,
-                contrast_limits=rescaling,
-                colormap=colormap,
-                name=layer_name,
-                translate=translate,
-            )
-        # TODO: Optionally return some values as well? e.g. if info is needed
-        # by label loading
-
     def run(self):
         # TODO: Handle case of this function being slow: Threadworker?
         roi_table = self._roi_table_picker.value
@@ -246,6 +199,7 @@ class ROILoader(Container):
         level = self._level_picker.value
         channels = self._channel_picker.value
         labels = self._label_picker.value
+        features = self._feature_picker.value
         if len(channels) < 1 and len(labels) < 1:
             logger.info(
                 "No channel or labels selected. "
@@ -254,123 +208,22 @@ class ROILoader(Container):
             return
         blending = None
 
-        # Get translation within the larger image based on the ROI table
-        roi_df = self.ome_zarr_image.read_table(roi_table).to_df()
-        roi_translation = (
-            self.translation[0] + roi_df.loc[roi_name, "y_micrometer"],
-            self.translation[1] + roi_df.loc[roi_name, "x_micrometer"],
+        if self._remove_old_labels_box.value:
+            remove_existing_label_layers(self._viewer)
+
+        load_roi(
+            ome_zarr_image=self.ome_zarr_image,
+            viewer=self._viewer,
+            roi_table=roi_table,
+            roi_name=roi_name,
+            layer_base_name=self.layer_base_name,
+            channels=channels,
+            level=level,
+            labels=labels,
+            features=features,
+            translation=self.translation,
+            blending=blending,
         )
-        # scale_img = None
-
-        # Set layer names
-        if roi_df.shape[0] == 1:
-            layer_base_name = self.layer_base_name
-        else:
-            layer_base_name = f"{self.layer_base_name}{roi_name}_"
-
-        # Load intensity images
-        for channel in channels:
-            self.add_intensity_roi(
-                channel,
-                roi_table,
-                roi_name,
-                level,
-                blending,
-                translate=roi_translation,
-                layer_name=f"{layer_base_name}{channel}",
-            )
-            blending = "additive"
-
-        # Load labels
-        # TODO: handle case of no intensity image being present =>
-        # level choice for labels?
-        for label in labels:
-            label_roi, scale_label = self.ome_zarr_image.load_label_roi(
-                roi_table=roi_table,
-                roi_name=roi_name,
-                label=label,
-                level_path_img=level,
-            )
-
-            layer_name = f"{layer_base_name}{label}"
-            if layer_name in self._viewer.layers:
-                logger.info(f"{layer_name} is already loaded")
-            else:
-                self.label_layers[label] = self._viewer.add_labels(
-                    label_roi,
-                    scale=scale_label,
-                    name=layer_name,
-                    translate=roi_translation,
-                )
-
-        # Load features
-        features = self._feature_picker.value
-        for table_name in features:
-            # FIXME: Check if no label type or no match
-            label_layer = self.find_matching_label_layer(table_name)
-            self.add_feature_table_to_layer(
-                table_name,
-                label_layer,
-                roi_name,
-            )
-
-    def find_matching_label_layer(self, table_name):
-        """
-        Finds the matching label layer for a feature table
-        """
-        table_attrs = self.ome_zarr_image.get_table_attrs(table_name)
-        try:
-            target_label_name = table_attrs["region"]["path"].split("/")[-1]
-        except KeyError:
-            target_label_name = list(self.label_layers.keys())[0]
-            logger.info(
-                f"Table {table_name} did not have region metadata to match"
-                "it to the correct label image. Attaching the features to the"
-                f"first selected label layer ({target_label_name})"
-            )
-
-        if target_label_name not in self.label_layers:
-            target_label_name = list(self.label_layers.keys())[0]
-            logger.info(
-                f"The label {target_label_name} that {table_name} would be "
-                "matched to where not loaded. Attaching the features to the"
-                f"first selected label layer ({target_label_name})"
-            )
-
-        return self.label_layers[target_label_name]
-
-    def add_feature_table_to_layer(self, feature_table, label_layer, roi_name):
-        # FIXME: Add case where label layer already contains some columns
-        feature_ad = self.ome_zarr_image.read_table(
-            table_name=feature_table,
-        )
-        if "label" in feature_ad.obs:
-            # Cast to numpy array in case the data is lazily loaded as dask
-            labels_current_layer = np.unique(np.array(label_layer.data))[1:]
-            shared_labels = list(
-                set(feature_ad.obs["label"].astype(int))
-                & set(labels_current_layer)
-            )
-            features_roi = feature_ad[
-                feature_ad.obs["label"].astype(int).isin(shared_labels)
-            ]
-            features_df = features_roi.to_df()
-            # Drop duplicate columns
-            features_df = features_df.loc[
-                :, ~features_df.columns.duplicated()
-            ].copy()
-            features_df["label"] = feature_ad.obs["label"].astype(int)
-            features_df["roi_id"] = f"{self.zarr_url}:ROI_{roi_name}"
-            features_df.set_index("label", inplace=True, drop=False)
-            # To display correct
-            features_df["index"] = features_df["label"]
-            label_layer.features = features_df
-        else:
-            logger.info(
-                f"Table {feature_table} does not have a label obs "
-                "column, can't be loaded as features for the "
-                f"layer {label_layer}"
-            )
 
 
 class ROILoaderImage(ROILoader):
@@ -396,12 +249,18 @@ class ROILoaderImage(ROILoader):
 
 class ROILoaderPlate(ROILoader):
     def __init__(
-        self, viewer: napari.viewer.Viewer, plate_url: str, row: str, col: str
+        self,
+        viewer: napari.viewer.Viewer,
+        plate_url: str,
+        row: str,
+        col: str,
+        image_browser,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_url = plate_url.rstrip("/")
         self.row = row
         self.col = col
+        self.image_browser = image_browser
         super().__init__(
             viewer=viewer,
             extra_widgets=[
@@ -413,6 +272,8 @@ class ROILoaderPlate(ROILoader):
         zarr_images = self.get_available_ome_zarr_images()
         self._zarr_picker.choices = zarr_images
         self._zarr_picker._default_choices = zarr_images
+
+        self._run_button.clicked.connect(self._update_defaults)
 
         # Calculate base translation for a given well
         self.translation, _ = calculate_well_positions(
@@ -439,6 +300,19 @@ class ROILoaderPlate(ROILoader):
         except ValueError:
             self.ome_zarr_image = None
 
+    def _update_defaults(self):
+        "Updates Image Browser default when ROIs are loaded"
+        self.image_browser.update_defaults(
+            zarr_image_subgroup=self._zarr_picker.value,
+            roi_table=self._roi_table_picker.value,
+            roi_name=self._roi_picker.value,
+            channels=self._channel_picker.value,
+            level=self._level_picker.value,
+            labels=self._label_picker.value,
+            features=self._feature_picker.value,
+            remove_old_labels=self._remove_old_labels_box.value,
+        )
+
 
 class ImageEvent:
     def __init__(self):
@@ -450,3 +324,228 @@ class ImageEvent:
     def emit(self, *args, **kwargs):
         for handler in self.handlers:
             handler(*args, **kwargs)
+
+
+def load_roi(
+    ome_zarr_image: OMEZarrImage,
+    viewer,
+    roi_table: str,
+    roi_name: str,
+    layer_base_name: str,
+    channels: list = None,
+    level: str = "0",
+    labels: list = None,
+    features: list = None,
+    translation=(0, 0),
+    blending=None,
+):
+    """
+    Load images, labels & tables of a given ROI & add to viewer
+
+    Args:
+        ome_zarr_image: OME-Zarr object to be loaded
+        viewer: napari viewer object
+        roi_table: Name of the ROI table to load a ROI from
+            (e.g. "well_ROI_table")
+        roi_name: Name of the ROI within the roi_table to load
+        layer_base_name: Base name for the layers to be added
+        channels: List of intensity channels to load
+        level: Resolution level to load
+        labels: List of labels to load
+        translation: Translation to apply to all loaded ROIs (typically the
+            translation to shift it to the correct well in a plate setting)
+        blending: Blending for the first intensity image to be used
+
+    """
+    # Get translation within the larger image based on the ROI table
+    label_layers = {}
+
+    roi_df = ome_zarr_image.read_table(roi_table).to_df()
+    roi_translation = (
+        translation[0] + roi_df.loc[roi_name, "y_micrometer"],
+        translation[1] + roi_df.loc[roi_name, "x_micrometer"],
+    )
+
+    # Set layer names
+    if roi_df.shape[0] == 1:
+        layer_base_name = layer_base_name
+    else:
+        layer_base_name = f"{layer_base_name}{roi_name}_"
+
+    # Load intensity images
+    if channels:
+        for channel in channels:
+            add_intensity_roi(
+                ome_zarr_image,
+                viewer,
+                channel,
+                roi_table,
+                roi_name,
+                level,
+                blending,
+                translate=roi_translation,
+                layer_name=f"{layer_base_name}{channel}",
+            )
+            blending = "additive"
+
+    # Load labels
+    # TODO: handle case of no intensity image being present =>
+    # level choice for labels?
+    for label in labels:
+        label_roi, scale_label = ome_zarr_image.load_label_roi(
+            roi_table=roi_table,
+            roi_name=roi_name,
+            label=label,
+            level_path_img=level,
+        )
+
+        layer_name = f"{layer_base_name}{label}"
+        if layer_name in viewer.layers:
+            logger.info(f"{layer_name} is already loaded")
+            label_layers[label] = viewer.layers[layer_name]
+        else:
+            label_layers[label] = viewer.add_labels(
+                label_roi,
+                scale=scale_label,
+                name=layer_name,
+                translate=roi_translation,
+            )
+
+    # Load features
+    for table_name in features:
+        # FIXME: Check if no label type or no match
+        label_layer = find_matching_label_layer(
+            ome_zarr_image, table_name, label_layers
+        )
+        add_feature_table_to_layer(
+            ome_zarr_image,
+            table_name,
+            label_layer,
+            roi_name,
+        )
+
+
+def add_intensity_roi(
+    ome_zarr_image: OMEZarrImage,
+    viewer,
+    channel: str,
+    roi_table: str,
+    roi_name: str,
+    level: str,
+    blending: str,
+    translate: tuple[float, float],
+    layer_name: str = "",
+):
+    img_roi, scale_img = ome_zarr_image.load_intensity_roi(
+        roi_table=roi_table,
+        roi_name=roi_name,
+        channel=channel,
+        level_path=level,
+    )
+    if not np.any(img_roi):
+        return
+
+    # Get channel omero metadata
+    omero = ome_zarr_image.get_omero_metadata(channel)
+    try:
+        # Colormap creation needs to have this black initial color for
+        # background
+        colormap = Colormap(
+            ["#000000", f"#{omero.color}"],
+            name=omero.color,
+        )
+    except AttributeError:
+        colormap = None
+    try:
+        rescaling = (
+            omero.window.start,
+            omero.window.end,
+        )
+    except AttributeError:
+        rescaling = None
+
+    if layer_name in viewer.layers:
+        logger.info(f"{layer_name} is already loaded")
+    else:
+        viewer.add_image(
+            img_roi,
+            scale=scale_img,
+            blending=blending,
+            contrast_limits=rescaling,
+            colormap=colormap,
+            name=layer_name,
+            translate=translate,
+        )
+    # TODO: Optionally return some values as well? e.g. if info is needed
+    # by label loading
+
+
+def find_matching_label_layer(ome_zarr_image, table_name, label_layers: list):
+    """
+    Finds the matching label layer for a feature table
+    """
+    table_attrs = ome_zarr_image.get_table_attrs(table_name)
+    try:
+        target_label_name = table_attrs["region"]["path"].split("/")[-1]
+    except KeyError:
+        target_label_name = list(label_layers.keys())[0]
+        logger.info(
+            f"Table {table_name} did not have region metadata to match"
+            "it to the correct label image. Attaching the features to the"
+            f"first selected label layer ({target_label_name})"
+        )
+
+    if target_label_name not in label_layers:
+        target_label_name = list(label_layers.keys())[0]
+        logger.info(
+            f"The label {target_label_name} that {table_name} would be "
+            "matched to where not loaded. Attaching the features to the"
+            f"first selected label layer ({target_label_name})"
+        )
+
+    return label_layers[target_label_name]
+
+
+def add_feature_table_to_layer(
+    ome_zarr_image, feature_table, label_layer, roi_name
+):
+    # FIXME: Add case where label layer already contains some columns
+    feature_ad = ome_zarr_image.read_table(
+        table_name=feature_table,
+    )
+    if "label" in feature_ad.obs:
+        # Cast to numpy array in case the data is lazily loaded as dask
+        labels_current_layer = np.unique(np.array(label_layer.data))[1:]
+        shared_labels = list(
+            set(feature_ad.obs["label"].astype(int))
+            & set(labels_current_layer)
+        )
+        features_roi = feature_ad[
+            feature_ad.obs["label"].astype(int).isin(shared_labels)
+        ]
+        features_df = features_roi.to_df()
+        # Drop duplicate columns
+        features_df = features_df.loc[
+            :, ~features_df.columns.duplicated()
+        ].copy()
+        features_df["label"] = feature_ad.obs["label"].astype(int)
+        features_df["roi_id"] = f"{ome_zarr_image.zarr_url}:ROI_{roi_name}"
+        features_df.set_index("label", inplace=True, drop=False)
+        # To display correct
+        features_df["index"] = features_df["label"]
+        label_layer.features = features_df
+    else:
+        logger.info(
+            f"Table {feature_table} does not have a label obs "
+            "column, can't be loaded as features for the "
+            f"layer {label_layer}"
+        )
+
+
+def remove_existing_label_layers(viewer):
+    for layer in viewer.layers:
+        # FIXME: Generalize well name catching
+        if type(layer) == napari.layers.Labels and re.match(
+            r"[A-Z]\d+_*", layer.name
+        ):
+            viewer.layers.remove(layer)

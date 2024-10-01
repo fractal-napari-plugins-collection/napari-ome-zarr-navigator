@@ -21,7 +21,12 @@ from magicgui.widgets import (
 )
 from zarr.errors import PathNotFoundError
 
-from napari_ome_zarr_navigator.roi_loader import ROILoaderPlate
+from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
+from napari_ome_zarr_navigator.roi_loader import (
+    ROILoaderPlate,
+    load_roi,
+    remove_existing_label_layers,
+)
 from napari_ome_zarr_navigator.util import (
     alpha_to_numeric,
     calculate_well_positions,
@@ -42,12 +47,26 @@ class ImgBrowser(Container):
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
         self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
         self.btn_load_roi = PushButton(
-            text="Send to ROI Loader ⤵️", enabled=False
+            text="Select ROI to load ⤵️", enabled=False
+        )
+        self.btn_load_default_roi = PushButton(
+            text="Load selected ROI for additional well(s)",
+            enabled=False,
+            tooltip="Once you've loaded a ROI with the 'Select ROI to load' "
+            "button, this allows you to load the same ROI for different wells.",
         )
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
         self.progress = ProgressBar(visible=False)
+        self.default_zarr_image_subgroup = None
+        self.default_roi_table = None
+        self.default_roi_name = None
+        self.default_channels = None
+        self.default_level = None
+        self.default_labels = None
+        self.default_features = None
+        self.remove_old_labels = False
 
         super().__init__(
             widgets=[
@@ -60,6 +79,7 @@ class ImgBrowser(Container):
                     layout="horizontal",
                 ),
                 self.btn_load_roi,
+                self.btn_load_default_roi,
             ],
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
@@ -67,6 +87,7 @@ class ImgBrowser(Container):
         self.zarr_dir.changed.connect(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.load_roi)
+        self.btn_load_default_roi.clicked.connect(self.load_default_roi)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def initialize_filters(self):
@@ -206,13 +227,51 @@ class ImgBrowser(Container):
                     self.viewer.window.remove_dock_widget(self.roi_widget)
 
             self.roi_loader = ROILoaderPlate(
-                self.viewer, str(self.zarr_root), row_alpha[0], col_str[0]
+                self.viewer,
+                str(self.zarr_root),
+                row_alpha[0],
+                col_str[0],
+                self,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,
                 name="ROI Loader",
                 tabify=True,
                 allowed_areas=["right"],
+            )
+
+    def load_default_roi(self):
+        matches = [
+            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+        ]
+        wells = [(m.group(1), m.group(2)) for m in matches]
+
+        # Loop over all selected wells
+        for well in wells:
+            if self.remove_old_labels:
+                remove_existing_label_layers(self.viewer)
+            layer_base_name = f"{well[0]}{well[1]}_"
+            # Calculate translations
+            translation, _ = calculate_well_positions(
+                plate_url=self.zarr_root,
+                row=well[0],
+                col=well[1],
+            )
+            # Create the Zarr object
+            zarr_url = f"{str(self.zarr_root)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
+            ome_zarr_image = OMEZarrImage(zarr_url)
+            load_roi(
+                ome_zarr_image=ome_zarr_image,
+                viewer=self.viewer,
+                roi_table=self.default_roi_table,
+                roi_name=self.default_roi_name,
+                layer_base_name=layer_base_name,
+                channels=self.default_channels,
+                level=self.default_level,
+                labels=self.default_labels,
+                features=self.default_features,
+                translation=translation,
+                blending=None,
             )
 
     def go_to_well(self):
@@ -282,6 +341,27 @@ class ImgBrowser(Container):
                 return ad.concat(tbl, keys=wells_str, index_unique="-")
             else:
                 return ad.concat(tbl)
+
+    def update_defaults(
+        self,
+        zarr_image_subgroup,
+        roi_table,
+        roi_name,
+        channels,
+        level,
+        labels,
+        features,
+        remove_old_labels,
+    ):
+        self.default_zarr_image_subgroup = zarr_image_subgroup
+        self.default_roi_table = roi_table
+        self.default_roi_name = roi_name
+        self.default_channels = channels
+        self.default_level = level
+        self.default_labels = labels
+        self.default_features = features
+        self.remove_old_labels = remove_old_labels
+        self.btn_load_default_roi.enabled = True
 
 
 def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
