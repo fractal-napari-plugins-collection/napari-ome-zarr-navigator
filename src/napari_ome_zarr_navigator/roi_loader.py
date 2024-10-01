@@ -396,7 +396,12 @@ class ROILoaderImage(ROILoader):
 
 class ROILoaderPlate(ROILoader):
     def __init__(
-        self, viewer: napari.viewer.Viewer, plate_url: str, row: str, col: str
+        self,
+        viewer: napari.viewer.Viewer,
+        plate_url: str,
+        row: str,
+        col: str,
+        is_plate: bool,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_url = plate_url.rstrip("/")
@@ -416,9 +421,7 @@ class ROILoaderPlate(ROILoader):
 
         # Calculate base translation for a given well
         self.translation, _ = calculate_well_positions(
-            plate_url=plate_url,
-            row=row,
-            col=col,
+            plate_url=plate_url, row=row, col=col, is_plate=is_plate
         )
 
         # # Handle defaults for plate loading
