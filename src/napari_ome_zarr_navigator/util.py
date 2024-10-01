@@ -56,7 +56,7 @@ def add_features_to_labels(
         pass
 
 
-def calculate_well_positions(plate_url, row, col):
+def calculate_well_positions(plate_url, row, col, is_plate=True):
     dataset = 0
     level = 0
     zarr_url = f"{plate_url}/{row}/{col}/{dataset}"
@@ -70,10 +70,16 @@ def calculate_well_positions(plate_url, row, col):
     row = rows.index(row)
     col = cols.index(col)
 
-    top_left_corner = [row * scale[0] * shape[0], col * scale[1] * shape[1]]
+    if is_plate:
+        top_left_corner = [
+            row * scale[0] * shape[0],
+            col * scale[1] * shape[1],
+        ]
+    else:
+        top_left_corner = [0, 0]
     bottom_right_corner = [
-        (row + 1) * scale[0] * shape[0],
-        (col + 1) * scale[1] * shape[1],
+        top_left_corner[0] + scale[0] * shape[0],
+        top_left_corner[1] + scale[1] * shape[1],
     ]
 
     return top_left_corner, bottom_right_corner

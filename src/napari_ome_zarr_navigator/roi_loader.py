@@ -255,6 +255,7 @@ class ROILoaderPlate(ROILoader):
         row: str,
         col: str,
         image_browser,
+        is_plate: bool,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_url = plate_url.rstrip("/")
@@ -277,9 +278,7 @@ class ROILoaderPlate(ROILoader):
 
         # Calculate base translation for a given well
         self.translation, _ = calculate_well_positions(
-            plate_url=plate_url,
-            row=row,
-            col=col,
+            plate_url=plate_url, row=row, col=col, is_plate=is_plate
         )
 
         # # Handle defaults for plate loading

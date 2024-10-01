@@ -1,20 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import logging
+import re
+import shutil
+import urllib
 from pathlib import Path
 from typing import Union
-import re
+
 import requests
-import urllib
-import hashlib
 import wget
-import shutil
-import logging
-import numpy as np
-
 from napari.types import LayerDataTuple
-
 from ome_zarr.io import parse_url
-from ome_zarr.reader import Reader, Node
+from ome_zarr.reader import Reader
 
 from napari_ome_zarr_navigator import _TEST_DATA_DIR
 
@@ -94,10 +92,15 @@ def hiPSC_zarr() -> list[LayerDataTuple]:
     return load_zarr(doi, zarr_url)
 
 
+def leukemia_zarr() -> list[LayerDataTuple]:
+    doi = "10.5281_zenodo.8322727"
+    zarr_url = "operetta_plate.zarr"
+    return load_zarr(doi, zarr_url)
+
+
 def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
     ome_zarr = load_ome_zarr_from_zenodo(doi, zarr_url)
     if ome_zarr:
-
         return [
             (
                 ome_zarr.data,
@@ -107,7 +110,9 @@ def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
                     "contrast_limits": ome_zarr.metadata["contrast_limits"],
                     "colormap": ome_zarr.metadata["colormap"],
                     "metadata": {"sample_path": ome_zarr.zarr.path},
-                    "scale": np.array([1.0, 0.1625, 0.1625]),
+                    "scale": ome_zarr.metadata["coordinateTransformations"][0][
+                        0
+                    ]["scale"][-3:],
                 },
                 "image",
             )
