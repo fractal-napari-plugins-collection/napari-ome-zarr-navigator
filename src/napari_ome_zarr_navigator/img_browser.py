@@ -72,6 +72,11 @@ class ImgBrowser(Container):
     def initialize_filters(self):
         self.zarr_dict = parse_zarr_url(self.zarr_dir.value)
         self.zarr_root = self.zarr_dict["root"]
+
+        if self.zarr_root == self.zarr_dir.value:
+            self.is_plate = True
+        else:
+            self.is_plate = False
         if self.zarr_root:
             adt = self.load_table()
             if adt:
@@ -206,7 +211,11 @@ class ImgBrowser(Container):
                     self.viewer.window.remove_dock_widget(self.roi_widget)
 
             self.roi_loader = ROILoaderPlate(
-                self.viewer, str(self.zarr_root), row_alpha[0], col_str[0]
+                self.viewer,
+                str(self.zarr_root),
+                row_alpha[0],
+                col_str[0],
+                self.is_plate,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,
@@ -233,7 +242,10 @@ class ImgBrowser(Container):
                     top_left_corner,
                     bottom_right_corner,
                 ) = calculate_well_positions(
-                    plate_url=self.zarr_root, row=well[0], col=well[1]
+                    plate_url=self.zarr_root,
+                    row=well[0],
+                    col=well[1],
+                    is_plate=self.is_plate,
                 )
                 rec = np.array([top_left_corner, bottom_right_corner])
                 self.viewer.add_shapes(
