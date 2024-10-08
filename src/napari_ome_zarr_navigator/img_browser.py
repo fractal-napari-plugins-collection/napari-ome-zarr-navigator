@@ -218,7 +218,7 @@ class ImgBrowser(Container):
 
     def load_roi(self):
         matches = [
-            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
         ]
         row_alpha = [m.group(1) for m in matches]
         col_str = [m.group(2) for m in matches]
@@ -248,7 +248,7 @@ class ImgBrowser(Container):
 
     def load_default_roi(self):
         matches = [
-            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
         ]
         wells = [(m.group(1), m.group(2)) for m in matches]
 
@@ -282,13 +282,13 @@ class ImgBrowser(Container):
 
     def go_to_well(self):
         matches = [
-            re.match(r"([A-Z]+)(\d+)", well) for well in self.well.value
+            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
         ]
         wells = [(m.group(1), m.group(2)) for m in matches]
 
         for layer in self.viewer.layers:
             if type(layer) == napari.layers.Shapes and re.match(
-                r"([A-Z]+)(\d+)", layer.name
+                r"([a-z]*)(\d+)", layer.name
             ):
                 self.viewer.layers.remove(layer)
 
@@ -424,12 +424,12 @@ def _validate_wells(
     """
     if wells is not None:
         wells = [wells] if isinstance(wells, str) else wells
-        matches = [re.match(r"([A-Z]+)(\d+)", well) for well in wells]
+        matches = [re.match(r"([A-Z][a-z]*)(\d+)", well) for well in wells]
         wells = {(m.group(1), m.group(2)) for m in matches}
     else:
         with zarr.open(zarr_url) as metadata:
             matches = [
-                re.match(r"([A-Z]+)/(\d+)", well["path"])
+                re.match(r"([A-Z][a-z]*)/(\d+)", well["path"])
                 for well in metadata.attrs["plate"]["wells"]
             ]
             wells = {(m.group(1), m.group(2)) for m in matches}
