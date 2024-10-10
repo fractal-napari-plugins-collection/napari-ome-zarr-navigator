@@ -217,12 +217,8 @@ class ImgBrowser(Container):
                 self.well.value = wells[0]
 
     def load_roi(self):
-        matches = [
-            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
-        ]
-        row_alpha = [m.group(1) for m in matches]
-        col_str = [m.group(2) for m in matches]
-        if len(row_alpha) != 1 or len(col_str) != 1:
+        wells = get_row_cols(self.well.value)
+        if len(wells) != 1:
             msg = "Please select a single well."
             logger.info(msg)
             napari.utils.notifications.show_info(msg)
@@ -234,8 +230,8 @@ class ImgBrowser(Container):
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
                 str(self.zarr_root),
-                row_alpha[0],
-                col_str[0],
+                wells[0][0],
+                wells[0][1],
                 self,
                 self.is_plate,
             )
@@ -247,10 +243,7 @@ class ImgBrowser(Container):
             )
 
     def load_default_roi(self):
-        matches = [
-            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
-        ]
-        wells = [(m.group(1), m.group(2)) for m in matches]
+        wells = get_row_cols(self.well.value)
 
         # Loop over all selected wells
         for well in wells:
@@ -281,14 +274,11 @@ class ImgBrowser(Container):
             )
 
     def go_to_well(self):
-        matches = [
-            re.match(r"([A-Z][a-z]*)(\d+)", well) for well in self.well.value
-        ]
-        wells = [(m.group(1), m.group(2)) for m in matches]
+        wells = get_row_cols(self.well.value)
 
         for layer in self.viewer.layers:
             if type(layer) == napari.layers.Shapes and re.match(
-                r"([a-z]*)(\d+)", layer.name
+                r"([A-Z][a-z]*)(\d+)", layer.name
             ):
                 self.viewer.layers.remove(layer)
 
@@ -424,8 +414,7 @@ def _validate_wells(
     """
     if wells is not None:
         wells = [wells] if isinstance(wells, str) else wells
-        matches = [re.match(r"([A-Z][a-z]*)(\d+)", well) for well in wells]
-        wells = {(m.group(1), m.group(2)) for m in matches}
+        wells = get_row_cols(wells)
     else:
         with zarr.open(zarr_url) as metadata:
             matches = [
@@ -433,4 +422,16 @@ def _validate_wells(
                 for well in metadata.attrs["plate"]["wells"]
             ]
             wells = {(m.group(1), m.group(2)) for m in matches}
+    return wells
+
+
+def get_row_cols(well_list):
+    """
+    Given a well list, provide a list of rows & columns
+
+    The well list i
+
+    """
+    matches = [re.match(r"([A-Z][a-z]*)(\d+)", well) for well in well_list]
+    wells = [(m.group(1), m.group(2)) for m in matches]
     return wells
