@@ -545,6 +545,6 @@ def remove_existing_label_layers(viewer):
     for layer in viewer.layers:
         # FIXME: Generalize well name catching
         if type(layer) == napari.layers.Labels and re.match(
-            r"[A-Z]\d+_*", layer.name
+            r"[A-Z][a-z]*\d+_*", layer.name
         ):
             viewer.layers.remove(layer)
