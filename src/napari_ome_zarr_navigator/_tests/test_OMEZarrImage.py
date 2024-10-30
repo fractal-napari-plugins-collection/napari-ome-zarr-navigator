@@ -102,7 +102,7 @@ def test_wrong_zarr_urls(zenodo_zarr):
         OMEZarrImage(zarr_but_not_image)
     assert expected_error in str(exc_info.value)
     assert "multiscales" in str(exc_info.value)
-    assert "field required" in str(exc_info.value)
+    assert "Field required" in str(exc_info.value)
 
 
 def test_roi_loading_from_indices(ome_zarr_image_2d):
