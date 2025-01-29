@@ -512,9 +512,9 @@ def add_feature_table_to_layer(
     feature_ad = ome_zarr_image.read_table(
         table_name=feature_table,
     )
-    if "label" in feature_ad.obs:
-        # Cast to numpy array in case the data is lazily loaded as dask
-        labels_current_layer = np.unique(np.array(label_layer.data))[1:]
+    # Cast to numpy array in case the data is lazily loaded as dask
+    labels_current_layer = np.unique(np.array(label_layer.data))[1:]
+    if "labels" in feature_ad.obs:
         shared_labels = list(
             set(feature_ad.obs["label"].astype(int))
             & set(labels_current_layer)
@@ -530,15 +530,29 @@ def add_feature_table_to_layer(
         features_df["label"] = feature_ad.obs["label"].astype(int)
         features_df["roi_id"] = f"{ome_zarr_image.zarr_url}:ROI_{roi_name}"
         features_df.set_index("label", inplace=True, drop=False)
-        # To display correct
-        features_df["index"] = features_df["label"]
-        label_layer.features = features_df
+    # Handle "label" in anndata.obs.index instead (based on ngio)
+    elif feature_ad.obs.index.name == "label":
+        features_df = feature_ad.to_df()
+        features_df.index = features_df.index.astype(int)
+        features_df = features_df.loc[
+            features_df.index.isin(labels_current_layer)
+        ]
+        features_df = features_df.reset_index()
+        # Drop duplicate columns
+        features_df = features_df.loc[
+            :, ~features_df.columns.duplicated()
+        ].copy()
+        features_df["roi_id"] = f"{ome_zarr_image.zarr_url}:ROI_{roi_name}"
     else:
         logger.info(
             f"Table {feature_table} does not have a label obs "
             "column, can't be loaded as features for the "
             f"layer {label_layer}"
         )
+        return
+    # To display correct
+    features_df["index"] = features_df["label"]
+    label_layer.features = features_df
 
 
 def remove_existing_label_layers(viewer):
