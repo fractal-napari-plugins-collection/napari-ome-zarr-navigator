@@ -6,6 +6,7 @@ from typing import Union
 
 import anndata as ad
 import napari
+import ngio
 import numpy as np
 import pandas as pd
 import zarr
@@ -21,7 +22,6 @@ from magicgui.widgets import (
 )
 from zarr.errors import PathNotFoundError
 
-from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
     load_roi,
@@ -258,7 +258,7 @@ class ImgBrowser(Container):
             )
             # Create the Zarr object
             zarr_url = f"{str(self.zarr_root)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            ome_zarr_image = OMEZarrImage(zarr_url)
+            ome_zarr_image = ngio.NgffImage(zarr_url)
             load_roi(
                 ome_zarr_image=ome_zarr_image,
                 viewer=self.viewer,
