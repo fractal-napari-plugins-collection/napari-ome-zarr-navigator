@@ -47,7 +47,7 @@ class ImgBrowser(Container):
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
         self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
         self.btn_load_roi = PushButton(
-            text="Select ROI to load ⤵️", enabled=False
+            text="Select ROI to load", enabled=False
         )
         self.btn_load_default_roi = PushButton(
             text="Load selected ROI for additional well(s)",
