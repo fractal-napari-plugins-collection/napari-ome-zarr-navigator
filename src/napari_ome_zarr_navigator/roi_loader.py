@@ -3,6 +3,7 @@ import re
 
 import napari
 import napari.layers
+import ngio
 import numpy as np
 import zarr
 from fractal_tasks_core.ngff import load_NgffWellMeta
@@ -16,12 +17,11 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
+from ngio.core.roi import WorldCooROI
 
-from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
-from napari_ome_zarr_navigator.util import calculate_well_positions
-from napari_ome_zarr_navigator.utils_roi_loader import (
+from napari_ome_zarr_navigator.util import (
     NapariHandler,
-    read_table,
+    calculate_well_positions,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,8 @@ class ROILoader(Container):
             value=False, text="Remove existing labels"
         )
         self._run_button = PushButton(value=False, text="Load ROI")
+        self._ome_zarr_image: ngio.NgffImage = None
 
-        self._ome_zarr_image: OMEZarrImage = None
         self.image_changed = ImageEvent()
         # Initialize possible choices
 
@@ -93,7 +93,7 @@ class ROILoader(Container):
         return self._ome_zarr_image
 
     @ome_zarr_image.setter
-    def ome_zarr_image(self, value) -> OMEZarrImage:
+    def ome_zarr_image(self, value) -> ngio.NgffImage:
         if self._ome_zarr_image != value:
             self._ome_zarr_image = value
             self.image_changed.emit(self._ome_zarr_image)
@@ -117,11 +117,11 @@ class ROILoader(Container):
         @thread_worker
         def get_roi_choices():
             try:
-                roi_table = read_table(
-                    self.zarr_url, self._roi_table_picker.value
+                return (
+                    ngio.NgffImage(self.zarr_url)
+                    .tables.get_table(name=self._roi_table_picker.value)
+                    .table.index
                 )
-                new_choices = list(roi_table.obs_names)
-                return new_choices
             except zarr.errors.PathNotFoundError:
                 return [""]
 
@@ -142,10 +142,14 @@ class ROILoader(Container):
     def update_roi_table_choices(self, event):
         @thread_worker
         def threaded_get_table_list(table_type: str = None, strict=False):
-            return self.ome_zarr_image.get_tables_list(
-                table_type=table_type,
-                strict=strict,
-            )
+            if table_type == "ROIs":
+                return self.ome_zarr_image.tables.list(
+                    table_type="roi_table"
+                ) + self.ome_zarr_image.tables.list(
+                    table_type="masking_roi_table"
+                )
+            else:
+                return self.ome_zarr_image.tables.list(table_type=table_type)
 
         if self.ome_zarr_image:
             worker = threaded_get_table_list(
@@ -166,10 +170,11 @@ class ROILoader(Container):
 
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
-            channels = self.ome_zarr_image.get_channel_list()
-            levels = self.ome_zarr_image.get_pyramid_levels()
-            labels = self.ome_zarr_image.get_labels_list()
-            features = self.ome_zarr_image.get_tables_list(
+            channels = self.ome_zarr_image.image_meta.channel_labels
+            levels = self.ome_zarr_image.image_meta.levels_paths
+            labels = self.ome_zarr_image.labels.list()
+            # ngio version now strictly only loads feature tables
+            features = self.ome_zarr_image.tables.list(
                 table_type="feature_table"
             )
             self.set_available_image_attrs(channels, levels, labels, features)
@@ -242,7 +247,7 @@ class ROILoaderImage(ROILoader):
     def update_image_selection(self):
         self.zarr_url = self._zarr_url_picker.value
         try:
-            self.ome_zarr_image = OMEZarrImage(self.zarr_url)
+            self.ome_zarr_image = ngio.NgffImage(self.zarr_url)
         except ValueError:
             self.ome_zarr_image = None
 
@@ -295,7 +300,7 @@ class ROILoaderPlate(ROILoader):
             f"{self.plate_url}/{self.row}/{self.col}/{self._zarr_picker.value}"
         )
         try:
-            self.ome_zarr_image = OMEZarrImage(self.zarr_url)
+            self.ome_zarr_image = ngio.NgffImage(self.zarr_url)
         except ValueError:
             self.ome_zarr_image = None
 
@@ -326,7 +331,7 @@ class ImageEvent:
 
 
 def load_roi(
-    ome_zarr_image: OMEZarrImage,
+    ome_zarr_image: ngio.NgffImage,
     viewer,
     roi_table: str,
     roi_name: str,
@@ -335,8 +340,9 @@ def load_roi(
     level: str = "0",
     labels: list = None,
     features: list = None,
-    translation=(0, 0),
-    blending=None,
+    translation: tuple = (0, 0),
+    blending: str = None,
+    lazy: bool = False,
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -354,49 +360,79 @@ def load_roi(
         translation: Translation to apply to all loaded ROIs (typically the
             translation to shift it to the correct well in a plate setting)
         blending: Blending for the first intensity image to be used
+        lazy: Whether to use dask for lazy loading
 
     """
     # Get translation within the larger image based on the ROI table
     label_layers = {}
 
-    roi_df = ome_zarr_image.read_table(roi_table).to_df()
+    ngio_roi_table = ome_zarr_image.tables.get_table(roi_table)
+    curr_roi = ngio_roi_table.get_roi(field_index=roi_name)
+
     roi_translation = (
-        translation[0] + roi_df.loc[roi_name, "y_micrometer"],
-        translation[1] + roi_df.loc[roi_name, "x_micrometer"],
+        translation[0] + curr_roi.y,
+        translation[1] + curr_roi.x,
     )
 
     # Set layer names
-    if roi_df.shape[0] == 1:
+    if ngio_roi_table.num_rois == 1:
         layer_base_name = layer_base_name
     else:
         layer_base_name = f"{layer_base_name}{roi_name}_"
 
     # Load intensity images
+    # img_pixel_size = None
     if channels:
         for channel in channels:
             add_intensity_roi(
                 ome_zarr_image,
                 viewer,
                 channel,
-                roi_table,
-                roi_name,
-                level,
-                blending,
+                roi=curr_roi,
+                level=level,
+                blending=blending,
                 translate=roi_translation,
                 layer_name=f"{layer_base_name}{channel}",
+                lazy=lazy,
             )
             blending = "additive"
 
+        # img_pixel_size = ome_zarr_image.get_image(path=level).pixel_size
     # Load labels
     # TODO: handle case of no intensity image being present =>
     # level choice for labels?
     for label in labels:
-        label_roi, scale_label = ome_zarr_image.load_label_roi(
-            roi_table=roi_table,
-            roi_name=roi_name,
-            label=label,
-            level_path_img=level,
-        )
+        # FIXME: Add logic to set pixel size that should be loaded based on
+        # level & image pixel sizes. Currently just uses the same level string.
+        # See https://github.com/fractal-analytics-platform/ngio/issues/29
+        # if img_pixel_size:
+        #     ngio_label = ome_zarr_image.labels.get_label(
+        #         name=label, pixel_size=img_pixel_size
+        #     )
+        # else:
+        ngio_label = ome_zarr_image.labels.get_label(name=label, path=level)
+        if lazy:
+            label_roi = ngio_label.get_array_from_roi(
+                roi=curr_roi, mode="dask"
+            )
+        else:
+            label_roi = ngio_label.get_array_from_roi(
+                roi=curr_roi, mode="numpy"
+            )
+
+        # FIXME: load only relevant pixel size in case image is 2D
+
+        if len(label_roi.shape) == 3:
+            z, y, x = ngio_label.pixel_size.zyx
+            scale_label = (z, y, x)
+        elif len(label_roi.shape) == 2:
+            y, x = ngio_label.pixel_size.yx
+            scale_label = (y, x)
+        else:
+            raise NotImplementedError(
+                "ROI loading has not been implemented for ROIs of shape "
+                f"{len(label_roi.shape)} yet."
+            )
 
         layer_name = f"{layer_base_name}{label}"
         if layer_name in viewer.layers:
@@ -412,7 +448,6 @@ def load_roi(
 
     # Load features
     for table_name in features:
-        # FIXME: Check if no label type or no match
         label_layer = find_matching_label_layer(
             ome_zarr_image, table_name, label_layers
         )
@@ -425,40 +460,54 @@ def load_roi(
 
 
 def add_intensity_roi(
-    ome_zarr_image: OMEZarrImage,
+    ome_zarr_image: ngio.NgffImage,
     viewer,
     channel: str,
-    roi_table: str,
-    roi_name: str,
+    roi: WorldCooROI,
     level: str,
     blending: str,
     translate: tuple[float, float],
     layer_name: str = "",
+    lazy: bool = False,
 ):
-    img_roi, scale_img = ome_zarr_image.load_intensity_roi(
-        roi_table=roi_table,
-        roi_name=roi_name,
-        channel=channel,
-        level_path=level,
-    )
+    ngio_img = ome_zarr_image.get_image(path=level)
+    if lazy:
+        img_roi = ngio_img.get_array_from_roi(roi=roi, c=channel, mode="dask")
+    else:
+        img_roi = ngio_img.get_array_from_roi(roi=roi, c=channel, mode="numpy")
+
+    if len(img_roi.shape) == 3:
+        z, y, x = ngio_img.pixel_size.zyx
+        scale_img = (z, y, x)
+    elif len(img_roi.shape) == 2:
+        y, x = ngio_img.pixel_size.yx
+        scale_img = (y, x)
+    else:
+        raise NotImplementedError(
+            "ROI loading has not been implemented for ROIs of shape "
+            f"{len(img_roi.shape)} yet."
+        )
+
     if not np.any(img_roi):
         return
 
     # Get channel omero metadata
-    omero = ome_zarr_image.get_omero_metadata(channel)
+    ngio_channel = ome_zarr_image.image_meta.omero.channels[
+        ngio_img.get_channel_idx(label=channel)
+    ]
     try:
         # Colormap creation needs to have this black initial color for
         # background
         colormap = Colormap(
-            ["#000000", f"#{omero.color}"],
-            name=omero.color,
+            ["#000000", f"#{ngio_channel.channel_visualisation.color}"],
+            name=ngio_channel.channel_visualisation.color,
         )
     except AttributeError:
         colormap = None
     try:
         rescaling = (
-            omero.window.start,
-            omero.window.end,
+            ngio_channel.channel_visualisation.start,
+            ngio_channel.channel_visualisation.end,
         )
     except AttributeError:
         rescaling = None
@@ -479,20 +528,16 @@ def add_intensity_roi(
     # by label loading
 
 
-def find_matching_label_layer(ome_zarr_image, table_name, label_layers: list):
+def find_matching_label_layer(
+    ome_zarr_image: ngio.NgffImage, table_name: str, label_layers: list
+):
     """
     Finds the matching label layer for a feature table
     """
-    table_attrs = ome_zarr_image.get_table_attrs(table_name)
-    try:
-        target_label_name = table_attrs["region"]["path"].split("/")[-1]
-    except KeyError:
-        target_label_name = list(label_layers.keys())[0]
-        logger.info(
-            f"Table {table_name} did not have region metadata to match"
-            "it to the correct label image. Attaching the features to the"
-            f"first selected label layer ({target_label_name})"
-        )
+    ngio_table = ome_zarr_image.tables.get_table(
+        table_name, table_type="feature_table"
+    )
+    target_label_name = ngio_table.source_label()
 
     if target_label_name not in label_layers:
         target_label_name = list(label_layers.keys())[0]
@@ -506,50 +551,26 @@ def find_matching_label_layer(ome_zarr_image, table_name, label_layers: list):
 
 
 def add_feature_table_to_layer(
-    ome_zarr_image, feature_table, label_layer, roi_name
+    ome_zarr_image: ngio.NgffImage,
+    feature_table: str,
+    label_layer,
+    roi_name: str,
 ):
     # FIXME: Add case where label layer already contains some columns
-    feature_ad = ome_zarr_image.read_table(
-        table_name=feature_table,
-    )
+    features_df = ome_zarr_image.tables.get_table(
+        feature_table,
+        table_type="feature_table",
+    ).table
     # Cast to numpy array in case the data is lazily loaded as dask
     labels_current_layer = np.unique(np.array(label_layer.data))[1:]
-    if "labels" in feature_ad.obs:
-        shared_labels = list(
-            set(feature_ad.obs["label"].astype(int))
-            & set(labels_current_layer)
-        )
-        features_roi = feature_ad[
-            feature_ad.obs["label"].astype(int).isin(shared_labels)
-        ]
-        features_df = features_roi.to_df()
-        # Drop duplicate columns
-        features_df = features_df.loc[
-            :, ~features_df.columns.duplicated()
-        ].copy()
-        features_df["label"] = feature_ad.obs["label"].astype(int)
-        features_df["roi_id"] = f"{ome_zarr_image.zarr_url}:ROI_{roi_name}"
-        features_df.set_index("label", inplace=True, drop=False)
-    # Handle "label" in anndata.obs.index instead (based on ngio)
-    elif feature_ad.obs.index.name == "label":
-        features_df = feature_ad.to_df()
-        features_df.index = features_df.index.astype(int)
-        features_df = features_df.loc[
-            features_df.index.isin(labels_current_layer)
-        ]
-        features_df = features_df.reset_index()
-        # Drop duplicate columns
-        features_df = features_df.loc[
-            :, ~features_df.columns.duplicated()
-        ].copy()
-        features_df["roi_id"] = f"{ome_zarr_image.zarr_url}:ROI_{roi_name}"
-    else:
-        logger.info(
-            f"Table {feature_table} does not have a label obs "
-            "column, can't be loaded as features for the "
-            f"layer {label_layer}"
-        )
-        return
+
+    features_df.index = features_df.index.astype(int)
+    features_df = features_df.loc[features_df.index.isin(labels_current_layer)]
+    features_df = features_df.reset_index()
+    # Drop duplicate columns
+    features_df = features_df.loc[:, ~features_df.columns.duplicated()].copy()
+    features_df["roi_id"] = f"{ome_zarr_image.store}:ROI_{roi_name}"
+
     # To display correct
     features_df["index"] = features_df["label"]
     label_layer.features = features_df

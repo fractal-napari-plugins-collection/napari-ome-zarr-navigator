@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
+import logging
 import string
 
-import anndata as ad
 import dask.array as da
-import napari
 from fractal_tasks_core.ngff import load_NgffImageMeta
 from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
-from zarr.errors import PathNotFoundError
+from napari.utils.notifications import show_info
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -36,26 +35,6 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
         string.ascii_lowercase[numeric - 1]
 
 
-def add_features_to_labels(
-    zarr_url: str,
-    labels_layer: napari.layers.Labels,
-    feature_name: str = "regionprops",
-):
-    """Add features to napari labels layer
-
-    Args:
-        zarr_url: Path to the OME-ZARR
-        labels_layer: napari labels layer
-        feature_name: Folder name of the measured regionprobs features
-    """
-    try:
-        ann_tbl = ad.read_zarr(f"{zarr_url}/tables/{feature_name}/")
-        labels_layer.features = ann_tbl.to_df()
-        labels_layer.predictions = ann_tbl.obs
-    except PathNotFoundError:
-        pass
-
-
 def calculate_well_positions(plate_url, row, col, is_plate=True):
     dataset = 0
     level = 0
@@ -83,3 +62,9 @@ def calculate_well_positions(plate_url, row, col, is_plate=True):
     ]
 
     return top_left_corner, bottom_right_corner
+
+
+class NapariHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        show_info(log_entry)

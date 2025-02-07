@@ -6,6 +6,7 @@ from typing import Union
 
 import anndata as ad
 import napari
+import ngio
 import numpy as np
 import pandas as pd
 import zarr
@@ -21,7 +22,6 @@ from magicgui.widgets import (
 )
 from zarr.errors import PathNotFoundError
 
-from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
     load_roi,
@@ -47,7 +47,7 @@ class ImgBrowser(Container):
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
         self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
         self.btn_load_roi = PushButton(
-            text="Select ROI to load ⤵️", enabled=False
+            text="Select ROI to load", enabled=False
         )
         self.btn_load_default_roi = PushButton(
             text="Load selected ROI for additional well(s)",
@@ -258,7 +258,7 @@ class ImgBrowser(Container):
             )
             # Create the Zarr object
             zarr_url = f"{str(self.zarr_root)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            ome_zarr_image = OMEZarrImage(zarr_url)
+            ome_zarr_image = ngio.NgffImage(zarr_url)
             load_roi(
                 ome_zarr_image=ome_zarr_image,
                 viewer=self.viewer,
@@ -324,6 +324,7 @@ class ImgBrowser(Container):
         while wells:
             row_alpha, col = wells.pop()
             try:
+                # TODO: Switch to using ngio to load condition tables?
                 tbl.append(
                     ad.read_zarr(
                         f"{self.zarr_root}/{row_alpha}/{col}/{dataset}/tables/{name}"
@@ -336,6 +337,8 @@ class ImgBrowser(Container):
             self.progress.value += 1
         self.progress.visible = False
         if tbl:
+            # If we switch to ngio table loading, we'd now have pandas tables
+            # to handle here
             if len(wells_str) > 1:
                 return ad.concat(tbl, keys=wells_str, index_unique="-")
             else:
