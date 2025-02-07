@@ -19,11 +19,9 @@ from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
 from ngio.core.roi import WorldCooROI
 
-# from napari_ome_zarr_navigator.ome_zarr_image import OMEZarrImage
-from napari_ome_zarr_navigator.util import calculate_well_positions
-from napari_ome_zarr_navigator.utils_roi_loader import (
+from napari_ome_zarr_navigator.util import (
     NapariHandler,
-    read_table,
+    calculate_well_positions,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,11 +117,11 @@ class ROILoader(Container):
         @thread_worker
         def get_roi_choices():
             try:
-                roi_table = read_table(
-                    self.zarr_url, self._roi_table_picker.value
+                return (
+                    ngio.NgffImage(self.zarr_url)
+                    .tables.get_table(name=self._roi_table_picker.value)
+                    .table.index
                 )
-                new_choices = list(roi_table.obs_names)
-                return new_choices
             except zarr.errors.PathNotFoundError:
                 return [""]
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+import logging
 import string
 
 import dask.array as da
 from fractal_tasks_core.ngff import load_NgffImageMeta
 from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
+from napari.utils.notifications import show_info
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -60,3 +62,9 @@ def calculate_well_positions(plate_url, row, col, is_plate=True):
     ]
 
     return top_left_corner, bottom_right_corner
+
+
+class NapariHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        show_info(log_entry)
