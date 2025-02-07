@@ -324,6 +324,7 @@ class ImgBrowser(Container):
         while wells:
             row_alpha, col = wells.pop()
             try:
+                # TODO: Switch to using ngio to load condition tables?
                 tbl.append(
                     ad.read_zarr(
                         f"{self.zarr_root}/{row_alpha}/{col}/{dataset}/tables/{name}"
@@ -336,6 +337,8 @@ class ImgBrowser(Container):
             self.progress.value += 1
         self.progress.visible = False
         if tbl:
+            # If we switch to ngio table loading, we'd now have pandas tables
+            # to handle here
             if len(wells_str) > 1:
                 return ad.concat(tbl, keys=wells_str, index_unique="-")
             else:
