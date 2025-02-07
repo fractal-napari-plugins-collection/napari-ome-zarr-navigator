@@ -342,8 +342,9 @@ def load_roi(
     level: str = "0",
     labels: list = None,
     features: list = None,
-    translation=(0, 0),
-    blending=None,
+    translation: tuple = (0, 0),
+    blending: str = None,
+    lazy: bool = False,
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -361,6 +362,7 @@ def load_roi(
         translation: Translation to apply to all loaded ROIs (typically the
             translation to shift it to the correct well in a plate setting)
         blending: Blending for the first intensity image to be used
+        lazy: Whether to use dask for lazy loading
 
     """
     # Get translation within the larger image based on the ROI table
@@ -381,6 +383,7 @@ def load_roi(
         layer_base_name = f"{layer_base_name}{roi_name}_"
 
     # Load intensity images
+    # img_pixel_size = None
     if channels:
         for channel in channels:
             add_intensity_roi(
@@ -392,21 +395,46 @@ def load_roi(
                 blending=blending,
                 translate=roi_translation,
                 layer_name=f"{layer_base_name}{channel}",
+                lazy=lazy,
             )
             blending = "additive"
 
+        # img_pixel_size = ome_zarr_image.get_image(path=level).pixel_size
     # Load labels
     # TODO: handle case of no intensity image being present =>
     # level choice for labels?
     for label in labels:
         # FIXME: Add logic to set pixel size that should be loaded based on
         # level & image pixel sizes. Currently just uses the same level string.
+        # See https://github.com/fractal-analytics-platform/ngio/issues/29
+        # if img_pixel_size:
+        #     ngio_label = ome_zarr_image.labels.get_label(
+        #         name=label, pixel_size=img_pixel_size
+        #     )
+        # else:
         ngio_label = ome_zarr_image.labels.get_label(name=label, path=level)
-        # TODO: Mode numpy or dask?
-        label_roi = ngio_label.get_array_from_roi(roi=curr_roi)
-        # FIXME: load only relevant pixel size
-        z, y, x = ngio_label.pixel_size.zyx
-        scale_label = (z, y, x)
+        if lazy:
+            label_roi = ngio_label.get_array_from_roi(
+                roi=curr_roi, mode="dask"
+            )
+        else:
+            label_roi = ngio_label.get_array_from_roi(
+                roi=curr_roi, mode="numpy"
+            )
+
+        # FIXME: load only relevant pixel size in case image is 2D
+
+        if len(label_roi.shape) == 3:
+            z, y, x = ngio_label.pixel_size.zyx
+            scale_label = (z, y, x)
+        elif len(label_roi.shape) == 2:
+            y, x = ngio_label.pixel_size.yx
+            scale_label = (y, x)
+        else:
+            raise NotImplementedError(
+                "ROI loading has not been implemented for ROIs of shape "
+                f"{len(label_roi.shape)} yet."
+            )
 
         layer_name = f"{layer_base_name}{label}"
         if layer_name in viewer.layers:
@@ -421,10 +449,7 @@ def load_roi(
             )
 
     # Load features
-    # FIXME: Reimplement table loading
     for table_name in features:
-        # FIXME: Check if no label type or no match
-        # FIXME: Figure out how to refactor for ngio
         label_layer = find_matching_label_layer(
             ome_zarr_image, table_name, label_layers
         )
@@ -445,20 +470,33 @@ def add_intensity_roi(
     blending: str,
     translate: tuple[float, float],
     layer_name: str = "",
+    lazy: bool = False,
 ):
     ngio_img = ome_zarr_image.get_image(path=level)
-    # TODO: Mode numpy or dask?
-    img_roi = ngio_img.get_array_from_roi(roi=roi, c=channel)
-    # FIXME: load only relevant pixel size
-    z, y, x = ngio_img.pixel_size.zyx
-    scale_img = (z, y, x)
+    if lazy:
+        img_roi = ngio_img.get_array_from_roi(roi=roi, c=channel, mode="dask")
+    else:
+        img_roi = ngio_img.get_array_from_roi(roi=roi, c=channel, mode="numpy")
+
+    if len(img_roi.shape) == 3:
+        z, y, x = ngio_img.pixel_size.zyx
+        scale_img = (z, y, x)
+    elif len(img_roi.shape) == 2:
+        y, x = ngio_img.pixel_size.yx
+        scale_img = (y, x)
+    else:
+        raise NotImplementedError(
+            "ROI loading has not been implemented for ROIs of shape "
+            f"{len(img_roi.shape)} yet."
+        )
 
     if not np.any(img_roi):
         return
 
     # Get channel omero metadata
-    # FIXME: Find the correct channel to get omero metadata for
-    ngio_channel = ome_zarr_image.image_meta.omero.channels[0]
+    ngio_channel = ome_zarr_image.image_meta.omero.channels[
+        ngio_img.get_channel_idx(label=channel)
+    ]
     try:
         # Colormap creation needs to have this black initial color for
         # background
