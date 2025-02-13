@@ -514,7 +514,7 @@ def add_feature_table_to_layer(
     )
     # Cast to numpy array in case the data is lazily loaded as dask
     labels_current_layer = np.unique(np.array(label_layer.data))[1:]
-    if "labels" in feature_ad.obs:
+    if "label" in feature_ad.obs:
         shared_labels = list(
             set(feature_ad.obs["label"].astype(int))
             & set(labels_current_layer)
