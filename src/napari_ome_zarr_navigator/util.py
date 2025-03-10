@@ -64,8 +64,8 @@ def calculate_well_positions(plate_url, row, col, is_plate=True):
     image_meta = load_NgffImageMeta(zarr_url)
     scale = image_meta.get_pixel_sizes_zyx(level=level)[-2:]
     plate_meta = load_NgffPlateMeta(plate_url)
-    rows = [x.name for x in plate_meta.plate.rows]
-    cols = [x.name for x in plate_meta.plate.columns]
+    rows = sorted([x.name for x in plate_meta.plate.rows])
+    cols = sorted([x.name for x in plate_meta.plate.columns], key=int)
 
     row = rows.index(row)
     col = cols.index(col)
