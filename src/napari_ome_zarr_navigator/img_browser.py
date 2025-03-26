@@ -6,7 +6,6 @@ from typing import Union
 
 import anndata as ad
 import napari
-import ngio
 import numpy as np
 import pandas as pd
 import zarr
@@ -20,6 +19,7 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
+from ngio import open_omezarr_container
 from zarr.errors import PathNotFoundError
 
 from napari_ome_zarr_navigator.roi_loader import (
@@ -258,9 +258,9 @@ class ImgBrowser(Container):
             )
             # Create the Zarr object
             zarr_url = f"{str(self.zarr_root)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            ome_zarr_image = ngio.NgffImage(zarr_url)
+            ome_zarr_container = open_omezarr_container(zarr_url)
             load_roi(
-                ome_zarr_image=ome_zarr_image,
+                ome_zarr_container=ome_zarr_container,
                 viewer=self.viewer,
                 roi_table=self.default_roi_table,
                 roi_name=self.default_roi_name,
@@ -324,7 +324,7 @@ class ImgBrowser(Container):
         while wells:
             row_alpha, col = wells.pop()
             try:
-                # TODO: Switch to using ngio to load condition tables?
+                # FIXME: Switch to using ngio to load condition tables?
                 tbl.append(
                     ad.read_zarr(
                         f"{self.zarr_root}/{row_alpha}/{col}/{dataset}/tables/{name}"
@@ -337,7 +337,7 @@ class ImgBrowser(Container):
             self.progress.value += 1
         self.progress.visible = False
         if tbl:
-            # If we switch to ngio table loading, we'd now have pandas tables
+            # FIXME: If we switch to ngio table loading, we'd now have pandas tables
             # to handle here
             if len(wells_str) > 1:
                 return ad.concat(tbl, keys=wells_str, index_unique="-")

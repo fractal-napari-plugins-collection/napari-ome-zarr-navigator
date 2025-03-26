@@ -2,10 +2,10 @@
 import logging
 import string
 
-import dask.array as da
-from fractal_tasks_core.ngff import load_NgffImageMeta
-from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
+# from fractal_tasks_core.ngff import load_NgffImageMeta
+# from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
 from napari.utils.notifications import show_info
+from ngio import open_omezarr_container, open_omezarr_plate
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -36,23 +36,25 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
 
 
 def calculate_well_positions(plate_url, row, col, is_plate=True):
-    dataset = 0
-    level = 0
-    zarr_url = f"{plate_url}/{row}/{col}/{dataset}"
-    shape = da.from_zarr(f"{zarr_url}/{level}").shape[-2:]
-    image_meta = load_NgffImageMeta(zarr_url)
-    scale = image_meta.get_pixel_sizes_zyx(level=level)[-2:]
-    plate_meta = load_NgffPlateMeta(plate_url)
-    rows = [x.name for x in plate_meta.plate.rows]
-    cols = [x.name for x in plate_meta.plate.columns]
+    zarr_plate = open_omezarr_plate(
+        plate_url, cache=True, parallel_safe=False, mode="r"
+    )
+    # Load the first image of the selected well to get shape & pixel sizes
+    # Makes the assumption that all images in all wells will have the same shapes
+    image_path = f"{plate_url}/{zarr_plate.get_image_path(row, col, zarr_plate.get_well(row, col).paths()[0])}"
+    ome_zarr_container = open_omezarr_container(image_path)
+    level = ome_zarr_container.levels_paths[0]
+    ome_zarr_image = ome_zarr_container.get_image(path=level)
+    shape = ome_zarr_image.shape[-2:]
+    scale = (ome_zarr_image.pixel_size.y, ome_zarr_image.pixel_size.x)
 
-    row = rows.index(row)
-    col = cols.index(col)
+    row_i = zarr_plate.rows.index(row)
+    col_i = zarr_plate.columns.index(col)
 
     if is_plate:
         top_left_corner = [
-            row * scale[0] * shape[0],
-            col * scale[1] * shape[1],
+            row_i * scale[0] * shape[0],
+            col_i * scale[1] * shape[1],
         ]
     else:
         top_left_corner = [0, 0]
