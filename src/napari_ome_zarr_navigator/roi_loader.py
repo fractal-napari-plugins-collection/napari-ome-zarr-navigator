@@ -123,11 +123,8 @@ class ROILoader(Container):
     def update_roi_selection(self):
         @thread_worker
         def get_roi_choices():
-            curr_ome_zarr_container = open_omezarr_container(
-                store=self.zarr_url, cache=True, mode="r"
-            )
             try:
-                rois = curr_ome_zarr_container.get_table(
+                rois = self.ome_zarr_container.get_table(
                     name=self._roi_table_picker.value,
                     check_type="generic_roi_table",
                 ).rois()
@@ -209,20 +206,22 @@ class ROILoader(Container):
         self._feature_picker._default_choices = features
 
     def run(self):
-        # TODO: Handle case of this function being slow: Threadworker?
+        # TODO: Refactor to use thread worker
+        # (but keep it callable from img_browser class)
         roi_table = self._roi_table_picker.value
         roi_name = self._roi_picker.value
         level = self._level_picker.value
         channels = self._channel_picker.value
         labels = self._label_picker.value
         features = self._feature_picker.value
+        blending = None
+
         if len(channels) < 1 and len(labels) < 1:
             logger.info(
                 "No channel or labels selected. "
                 "Select the channels/labels you want to load"
             )
             return
-        blending = None
 
         if self._remove_old_labels_box.value:
             remove_existing_label_layers(self._viewer)
@@ -257,8 +256,10 @@ class ROILoaderImage(ROILoader):
 
     def update_image_selection(self):
         self.zarr_url = self._zarr_url_picker.value
+        # FIXME: Pick the right store type, optionally with token
+        store = self.zarr_url
         try:
-            self.ome_zarr_container = open_omezarr_container(self.zarr_url)
+            self.ome_zarr_container = open_omezarr_container(store)
         except (ValueError, NgioFileNotFoundError) as e:
             logger.error(f"Error while loading image: {e}")
             self.ome_zarr_container = None
@@ -403,7 +404,7 @@ def load_roi(
         layer_base_name = f"{layer_base_name}{roi_name}_"
 
     # Load intensity images
-    # img_pixel_size = None
+    img_pixel_size = None
     if channels:
         for channel in channels:
             add_intensity_roi(
@@ -419,20 +420,17 @@ def load_roi(
             )
             blending = "additive"
 
-        # img_pixel_size = ome_zarr_container.get_image(path=level).pixel_size
+        img_pixel_size = ome_zarr_container.get_image(path=level).pixel_size
     # Load labels
-    # TODO: handle case of no intensity image being present =>
-    # level choice for labels?
     for label in labels:
-        # FIXME: Add logic to set pixel size that should be loaded based on
-        # level & image pixel sizes. Currently just uses the same level string.
-        # See https://github.com/fractal-analytics-platform/ngio/issues/29
-        # if img_pixel_size:
-        #     ngio_label = ome_zarr_container.labels.get_label(
-        #         name=label, pixel_size=img_pixel_size
-        #     )
-        # else:
-        ngio_label = ome_zarr_container.get_label(name=label, path=level)
+        if img_pixel_size:
+            ngio_label = ome_zarr_container.get_label(
+                name=label,
+                pixel_size=img_pixel_size,
+                strict=False,
+            )
+        else:
+            ngio_label = ome_zarr_container.get_label(name=label, path=level)
         if lazy:
             label_roi = ngio_label.get_roi(roi=curr_roi, mode="dask").squeeze()
         else:
