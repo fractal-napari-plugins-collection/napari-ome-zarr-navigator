@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import logging
 import string
+from typing import Optional
 
 from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
 from napari.utils.notifications import show_info
@@ -134,6 +135,12 @@ class SourceSelector(Container):
 
     def on_change(self, callback):
         self._callbacks.append(callback)
+
+    def set_url(self, zarr_url: str, token: Optional[str] = None):
+        """Set a zarr_url"""
+        self._file_picker.value = zarr_url
+        self._http_url.value = zarr_url
+        self._http_token.value = token or ""
 
     @property
     def source(self):
