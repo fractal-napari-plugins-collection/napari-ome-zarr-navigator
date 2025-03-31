@@ -10,11 +10,7 @@ from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
-    FileEdit,
-    Label,
-    LineEdit,
     PushButton,
-    RadioButtons,
     Select,
 )
 from napari.qt.threading import thread_worker
@@ -22,10 +18,11 @@ from napari.utils.colormaps import Colormap
 from ngio import open_omezarr_container, open_omezarr_plate
 from ngio.common import WorldCooROI
 from ngio.utils import NgioFileNotFoundError, fractal_fsspec_store
-from qtpy.QtCore import QObject, QTimer, Signal
+from qtpy.QtCore import QObject, Signal
 
 from napari_ome_zarr_navigator.util import (
     NapariHandler,
+    SourceSelector,
     calculate_well_positions,
 )
 
@@ -247,85 +244,29 @@ class ROILoader(Container):
 
 class ROILoaderImage(ROILoader):
     def __init__(self, viewer: napari.viewer.Viewer, zarr_url: str = None):
-        # === Input source selector (radio buttons) ===
-        self._source_selector = RadioButtons(
-            label="Source",
-            choices=["File", "HTTP"],
-            value="File",
-            orientation="horizontal",
-        )
+        self._source_selector = SourceSelector()
 
-        # === Input widgets ===
-        self._zarr_url_picker = FileEdit(label="Zarr file", mode="d")
-        self._http_url_input = LineEdit(label="Zarr URL")
-        self._http_token_input = LineEdit(label="Token")
-        self._http_token_input.native.setEchoMode(2)  # Password-style input
-
-        # === Stack container for switching input fields ===
-        self._source_stack = Container(widgets=[self._zarr_url_picker])
-
-        # === Final container ===
-        self._source_container = Container(
-            widgets=[
-                Label(value="Input Source"),
-                self._source_selector,
-                self._source_stack,
-            ]
-        )
-
-        # === Initialize base ROILoader ===
         super().__init__(
             viewer=viewer,
-            extra_widgets=[
-                self._source_container,
-            ],
+            extra_widgets=[self._source_selector],
         )
 
-        # === Reactive behavior ===
-        self._source_selector.changed.connect(self._on_source_changed)
-        self._zarr_url_picker.changed.connect(self.update_image_selection)
+        self._source_selector.on_change(self.update_image_selection)
 
-        # Setup debounce timer for HTTP mode
-        self._http_input_timer = QTimer()
-        self._http_input_timer.setInterval(500)
-        self._http_input_timer.setSingleShot(True)
-        self._http_input_timer.timeout.connect(self.update_image_selection)
-
-        self._http_url_input.changed.connect(self._restart_http_input_timer)
-        self._http_token_input.changed.connect(self._restart_http_input_timer)
-
-        # === Set initial value if provided ===
-        if zarr_url:
-            self._zarr_url_picker.value = zarr_url
-
-    def _on_source_changed(self, source):
-        self._source_stack.clear()
-        if source == "File":
-            self._source_stack.extend([self._zarr_url_picker])
-        elif source == "HTTP":
-            self._source_stack.extend(
-                [
-                    self._http_url_input,
-                    self._http_token_input,
-                ]
-            )
-        # Optionally trigger update when switching modes
-        self.update_image_selection()
-
-    def _restart_http_input_timer(self, *args):
-        self._http_input_timer.start()
+        # Set initial value if provided
+        # if zarr_url:
+        #     self._zarr_url_picker.value = zarr_url
 
     def update_image_selection(self):
-        source = self._source_selector.value
+        source = self._source_selector.source
+        url = self._source_selector.url
+        token = self._source_selector.token
 
+        self.zarr_url = url
         if source == "File":
-            self.zarr_url = self._zarr_url_picker.value
-            store = self.zarr_url
-            token = None
-        elif source == "HTTP":
-            self.zarr_url = self._http_url_input.value.strip()
-            token = self._http_token_input.value.strip() or None
-            store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
+            store = url
+        else:
+            store = fractal_fsspec_store(url, fractal_token=token)
 
         try:
             self.ome_zarr_container = open_omezarr_container(

@@ -2,10 +2,10 @@
 import logging
 import string
 
-# from fractal_tasks_core.ngff import load_NgffImageMeta
-# from fractal_tasks_core.ngff.zarr_utils import load_NgffPlateMeta
+from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
 from napari.utils.notifications import show_info
 from ngio import open_omezarr_container, open_omezarr_plate
+from qtpy.QtCore import QTimer
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -70,3 +70,82 @@ class NapariHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
         show_info(log_entry)
+
+
+class SourceSelector(Container):
+    def __init__(self, label="Input Source", file_mode="d", debounce_ms=500):
+        # Source type selector
+        self._source_selector = RadioButtons(
+            label="Source",
+            choices=["File", "HTTP"],
+            orientation="horizontal",
+            value="File",
+        )
+
+        # File path selector
+        self._file_picker = FileEdit(label="Zarr file", mode=file_mode)
+
+        # HTTP inputs
+        self._http_url = LineEdit(label="Zarr URL")
+        self._http_token = LineEdit(label="Token")
+        self._http_token.native.setEchoMode(2)  # hide token display
+
+        # Stacked input fields
+        self._stack = Container(widgets=[self._file_picker])
+
+        # Assemble the container
+        self._main = Container(
+            widgets=[Label(value=label), self._source_selector, self._stack]
+        )
+        super().__init__(widgets=[self._main])
+        # Stop magicgui from making pop-ups of those widgets
+        self.callable = False
+        self._main.callable = False
+
+        # Debounce timer: Avoids reloading while someone modifies the URL
+        self._timer = QTimer()
+        self._timer.setInterval(debounce_ms)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._emit_changed)
+
+        # Events
+        self._source_selector.changed.connect(self._on_source_changed)
+        self._file_picker.changed.connect(self._emit_changed)
+        self._http_url.changed.connect(self._restart_timer)
+        self._http_token.changed.connect(self._restart_timer)
+
+        # Custom signal-style callback
+        self._callbacks = []
+
+    def _on_source_changed(self, value):
+        self._stack.clear()
+        if value == "File":
+            self._stack.extend([self._file_picker])
+        else:
+            self._stack.extend([self._http_url, self._http_token])
+        self._emit_changed()
+
+    def _restart_timer(self, *args):
+        self._timer.start()
+
+    def _emit_changed(self):
+        for cb in self._callbacks:
+            cb()
+
+    def on_change(self, callback):
+        self._callbacks.append(callback)
+
+    @property
+    def source(self):
+        return self._source_selector.value
+
+    @property
+    def url(self) -> str:
+        if self.source == "File":
+            return str(self._file_picker.value)
+        else:
+            return self._http_url.value.strip()
+
+    @property
+    def token(self) -> str:
+        return self._http_token.value.strip() or None
