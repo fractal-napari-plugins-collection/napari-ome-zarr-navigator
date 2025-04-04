@@ -55,10 +55,10 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
 
 def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     viewer = make_napari_viewer()
-    zarr_url = f"{zenodo_zarr[0]}/B/03/0"
+    zarr_url = zenodo_zarr[0] / "B" / "03" / "0"
     roi_loader = ROILoaderImage(
         viewer,
-        zarr_url=zarr_url,
+        zarr_url=str(zarr_url),
     )
     with qtbot.waitSignal(
         roi_loader.image_changed_event.roi_tables_updated, timeout=5000
