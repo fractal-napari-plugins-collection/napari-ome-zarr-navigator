@@ -22,7 +22,7 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
     image_browser = ImgBrowser(viewer=viewer)
     roi_loader = ROILoaderPlate(
         viewer,
-        plate_url=plate_url,
+        plate_store=plate_url,
         row="B",
         col="03",
         image_browser=image_browser,
