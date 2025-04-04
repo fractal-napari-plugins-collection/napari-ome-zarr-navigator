@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 from napari_ome_zarr_navigator.img_browser import ImgBrowser
@@ -55,7 +57,7 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
 
 def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     viewer = make_napari_viewer()
-    zarr_url = zenodo_zarr[0] / "B" / "03" / "0"
+    zarr_url = Path(zenodo_zarr[0]) / "B" / "03" / "0"
     roi_loader = ROILoaderImage(
         viewer,
         zarr_url=str(zarr_url),
