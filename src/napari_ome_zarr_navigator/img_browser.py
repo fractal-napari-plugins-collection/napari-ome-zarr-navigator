@@ -14,8 +14,12 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from ngio import open_omezarr_container, open_omezarr_plate
-from ngio.utils import NgioFileNotFoundError, fractal_fsspec_store
+from ngio import open_ome_zarr_container, open_ome_zarr_plate
+from ngio.utils import (
+    NgioFileNotFoundError,
+    NgioValidationError,
+    fractal_fsspec_store,
+)
 
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
@@ -95,11 +99,20 @@ class ImgBrowser(Container):
                 fractal_token=self._zarr_selector.token,
             )
         try:
-            self.zarr_plate = open_omezarr_plate(
+            self.zarr_plate = open_ome_zarr_plate(
                 self.plate_store, cache=True, parallel_safe=False, mode="r"
             )
         except NgioFileNotFoundError:
             self.zarr_plate = None
+        except NgioValidationError as e:
+            self.zarr_plate = None
+            msg = (
+                "No valid Zarr plate found at the provided URL. Verify the "
+                "URL to ensure it points to the root of the plate or "
+                f"check the validation error: \n {e}"
+            )
+            logger.info(msg)
+            napari.utils.notifications.show_info(msg)
 
     def initialize_filters(self):
         # New implementation
@@ -274,7 +287,7 @@ class ImgBrowser(Container):
                 store = fractal_fsspec_store(
                     zarr_url, fractal_token=self._zarr_selector.token
                 )
-            ome_zarr_container = open_omezarr_container(store)
+            ome_zarr_container = open_ome_zarr_container(store)
             load_roi(
                 ome_zarr_container=ome_zarr_container,
                 viewer=self.viewer,
@@ -334,16 +347,14 @@ class ImgBrowser(Container):
         self.progress.max = len(wells)
         self.progress.value = 0
         all_tables = []
-        for well_path in self.zarr_plate.get_wells():
-            row = well_path.split("/")[0]
-            col = well_path.split("/")[1]
+        for well_path, well in self.zarr_plate.get_wells().items():
             # Currently only loads condition tables from the first image
-            image = self.zarr_plate.get_well_images(row=row, column=col)[0]
+            image = well.get_image(image_path=well.paths()[0])
             try:
                 all_tables.append(image.get_table(name=table_name).dataframe)
             except KeyError:
                 logger.info(
-                    f'The table "{table_name}" was not found in well {row}{col}'
+                    f'The table "{table_name}" was not found in well {well_path}'
                 )
 
             self.progress.value += 1

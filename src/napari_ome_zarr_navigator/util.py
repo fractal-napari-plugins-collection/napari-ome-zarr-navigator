@@ -6,7 +6,7 @@ from typing import Optional
 
 from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
 from napari.utils.notifications import show_info
-from ngio import open_omezarr_container, open_omezarr_plate
+from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from qtpy.QtCore import QTimer
 
 
@@ -38,14 +38,19 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
 
 
 def calculate_well_positions(plate_store, row, col, is_plate=True):
-    # FIXME: Adapt to plate store
-    zarr_plate = open_omezarr_plate(
+    zarr_plate = open_ome_zarr_plate(
         plate_store, cache=True, parallel_safe=False, mode="r"
     )
     # Load the first image of the selected well to get shape & pixel sizes
     # Makes the assumption that all images in all wells will have the same shapes
-    image_path = f"{plate_store}/{zarr_plate.get_image_path(row, col, zarr_plate.get_well(row, col).paths()[0])}"
-    ome_zarr_container = open_omezarr_container(image_path)
+    image_store = zarr_plate.get_image_store(
+        row=row,
+        column=col,
+        image_path=zarr_plate.get_well(row, col).paths()[0],
+    )
+    ome_zarr_container = open_ome_zarr_container(
+        image_store, cache=True, mode="r"
+    )
     level = ome_zarr_container.levels_paths[0]
     ome_zarr_image = ome_zarr_container.get_image(path=level)
     shape = ome_zarr_image.shape[-2:]

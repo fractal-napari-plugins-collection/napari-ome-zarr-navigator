@@ -14,8 +14,8 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
-from ngio import open_omezarr_container, open_omezarr_plate
-from ngio.common import WorldCooROI
+from ngio import open_ome_zarr_container, open_ome_zarr_plate
+from ngio.common import Roi
 from ngio.utils import (
     NgioFileNotFoundError,
     StoreOrGroup,
@@ -276,7 +276,7 @@ class ROILoaderImage(ROILoader):
         else:
             store = fractal_fsspec_store(url, fractal_token=token)
         try:
-            self.ome_zarr_container = open_omezarr_container(
+            self.ome_zarr_container = open_ome_zarr_container(
                 store, mode="r", cache=True
             )
         except (ValueError, NgioFileNotFoundError) as e:
@@ -296,7 +296,7 @@ class ROILoaderPlate(ROILoader):
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
-        self.plate = open_omezarr_plate(
+        self.plate = open_ome_zarr_plate(
             store=self.plate_store, cache=True, mode="r", parallel_safe=False
         )
         self.row = row
@@ -330,12 +330,12 @@ class ROILoaderPlate(ROILoader):
         return well.paths()
 
     def update_image_selection(self):
-        # FIXME: Use store for this instead of url
-        self.zarr_url = f"{self.plate_store}/{self.row}/{self.col}/{self._zarr_picker.value}"
-        # self.plate.get_well_images()
+        image_store = self.plate.get_image_store(
+            row=self.row, column=self.col, image_path=self._zarr_picker.value
+        )
         try:
-            self.ome_zarr_container = open_omezarr_container(
-                self.zarr_url, cache=True, mode="r"
+            self.ome_zarr_container = open_ome_zarr_container(
+                image_store, cache=True, mode="r"
             )
         except (ValueError, NgioFileNotFoundError):
             self.ome_zarr_container = None
@@ -493,7 +493,7 @@ def add_intensity_roi(
     ome_zarr_container: ngio.OmeZarrContainer,
     viewer,
     channel: str,
-    roi: WorldCooROI,
+    roi: Roi,
     level: str,
     blending: str,
     translate: tuple[float, float],
