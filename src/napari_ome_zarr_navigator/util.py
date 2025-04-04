@@ -90,6 +90,11 @@ class ZarrSelector(Container):
             value="File",
         )
 
+        # Internal state to prevent redundant emits
+        self._last_file_url = None
+        self._last_http_url = None
+        self._last_token = None
+
         # File path selector
         self._file_picker = FileEdit(label="Zarr file", mode=file_mode)
 
@@ -143,8 +148,30 @@ class ZarrSelector(Container):
         self._timer.start()
 
     def _emit_changed(self):
-        for cb in self._callbacks:
-            cb()
+        """
+        Only emit if one of the URL/token values changed. Important to avoid
+        false-positive re-initializations of the whole plate.
+        """
+        curr_file = str(self._file_picker.value)
+        curr_http = self._http_url.value.strip()
+        curr_token = self._http_token.value.strip()
+
+        if (self.source == "File" and curr_file != self._last_file_url) or (
+            self.source == "HTTP"
+            and (
+                curr_http != self._last_http_url
+                or curr_token != self._last_token
+            )
+        ):
+            # Update state
+            self._last_file_url = curr_file
+            self._last_http_url = curr_http
+            self._last_token = curr_token
+
+            for cb in self._callbacks:
+                cb()
+        else:
+            pass
 
     def on_change(self, callback):
         self._callbacks.append(callback)

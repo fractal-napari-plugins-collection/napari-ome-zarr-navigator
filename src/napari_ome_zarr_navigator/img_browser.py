@@ -115,7 +115,10 @@ class ImgBrowser(Container):
             napari.utils.notifications.show_info(msg)
 
     def initialize_filters(self):
-        # New implementation
+        # Check if the zarr_url is empty & finish early
+        if self._zarr_selector.url is None or self._zarr_selector.url == ".":
+            return
+
         self.open_zarr_plate()
         # TODO Initialize zarr_dir & zarr_root?
         if self.zarr_plate:
@@ -207,6 +210,8 @@ class ImgBrowser(Container):
                 )
 
     def get_zarr_url(self):
+        # When the user adds new image layers, check if they have zarr_urls in
+        # the path or have a sample_path. If so, update the plugin with it.
         active = self.viewer.layers.selection.active
         if active and active.as_layer_data_tuple()[-1] == "image":
             path = self.viewer.layers.selection.active.source.path
