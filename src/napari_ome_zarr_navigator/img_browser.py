@@ -1,14 +1,10 @@
 import logging
 import re
 from contextlib import suppress
-from pathlib import Path
-from typing import Union
 
-import anndata as ad
 import napari
 import numpy as np
 import pandas as pd
-import zarr
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -18,8 +14,8 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from ngio import open_omezarr_container
-from zarr.errors import PathNotFoundError
+from ngio import open_omezarr_container, open_omezarr_plate
+from ngio.utils import NgioFileNotFoundError, fractal_fsspec_store
 
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
@@ -28,7 +24,6 @@ from napari_ome_zarr_navigator.roi_loader import (
 )
 from napari_ome_zarr_navigator.util import (
     ZarrSelector,
-    alpha_to_numeric,
     calculate_well_positions,
 )
 
@@ -40,9 +35,6 @@ class ImgBrowser(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         self.viewer = viewer
         self._zarr_selector = ZarrSelector()
-        # self.zarr_dir = FileEdit(
-        #     label="OME-Zarr URL", mode="d", filter="*.zarr"
-        # )
         self.filters = []
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
@@ -68,6 +60,8 @@ class ImgBrowser(Container):
         self.default_labels = None
         self.default_features = None
         self.remove_old_labels = False
+        self.zarr_plate = None
+        self.plate_store = None
 
         super().__init__(
             widgets=[
@@ -92,27 +86,39 @@ class ImgBrowser(Container):
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
-    def initialize_filters(self):
-        self.zarr_dict = parse_zarr_url(self._zarr_selector.url)
-        self.zarr_root = self.zarr_dict["root"]
-
-        if self.zarr_root == self._zarr_selector.url:
-            self.is_plate = True
+    def open_zarr_plate(self):
+        if self._zarr_selector._source_selector.value == "File":
+            self.plate_store = self._zarr_selector.url
         else:
-            self.is_plate = False
-        if self.zarr_root:
-            adt = self.load_table()
-            if adt:
-                self.df = adt.to_df()  # keep for backwards compatibility
-                if self.df.empty:
-                    self.df = adt.obs
+            self.plate_store = fractal_fsspec_store(
+                self._zarr_selector.url,
+                fractal_token=self._zarr_selector.token,
+            )
+        try:
+            self.zarr_plate = open_omezarr_plate(
+                self.plate_store, cache=True, parallel_safe=False, mode="r"
+            )
+        except NgioFileNotFoundError:
+            self.zarr_plate = None
+
+    def initialize_filters(self):
+        # New implementation
+        self.open_zarr_plate()
+        # TODO Initialize zarr_dir & zarr_root?
+        if self.zarr_plate:
+            self.is_plate = True
+            self.df = self.load_condition_table()
+            if self.df is not None:
                 self.df_without_pk = self.df.drop(
                     columns=["row", "col"]
-                ).apply(pd.to_numeric, errors="ignore")
+                )  # .apply(pd.to_numeric, errors="ignore")
+                # Casting to numeric with error ignore is deprecated.
+                # What would the point of it be??
                 self.df = pd.concat(
                     (self.df[["row", "col"]], self.df_without_pk), axis=1
                 )
                 self.filter_names = self.df_without_pk.columns
+
                 self.filters = Container(
                     widgets=[
                         Container(
@@ -147,24 +153,26 @@ class ImgBrowser(Container):
                     self.filters[i][0].changed.connect(self.filter_df)
                     self.filters[i][1].changed.connect(self.filter_df)
             else:
-                msg = "No condition table is present in the OME-Zarr."
-                logger.info(msg)
-                napari.utils.notifications.show_info(msg)
-                wells = _validate_wells(self.zarr_root, self.zarr_dict["well"])
-                wells_str = sorted([f"{w[0]}{w[1]}" for w in wells])
+                wells = []
+                dfs = []
+                for well_path in self.zarr_plate.get_wells():
+                    row = well_path.split("/")[0]
+                    col = well_path.split("/")[1]
+                    wells.append(f"{row}{col}")
+                    dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
+                wells_str = sorted(wells)
                 self.well.choices = wells_str
                 self.well._default_choices = wells_str
-                self.df = pd.DataFrame(
-                    {
-                        "row": [w[0] for w in wells],
-                        "col": [w[1] for w in wells],
-                    }
-                )
+                self.df = pd.concat(dfs, ignore_index=True)
                 self.filter_names = None
                 self.well.value = wells_str[0]
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
+        else:
+            self.is_plate = False
+            self.select_well.enabled = False
+            self.btn_load_roi.enabled = False
 
     def toggle_filter(self, i):
         def toggle_on_change():
@@ -231,7 +239,7 @@ class ImgBrowser(Container):
 
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
-                str(self.zarr_root),
+                self.plate_store,
                 wells[0][0],
                 wells[0][1],
                 self,
@@ -254,13 +262,19 @@ class ImgBrowser(Container):
             layer_base_name = f"{well[0]}{well[1]}_"
             # Calculate translations
             translation, _ = calculate_well_positions(
-                plate_url=self.zarr_root,
+                plate_store=self._zarr_selector.url,
                 row=well[0],
                 col=well[1],
             )
             # Create the Zarr object
-            zarr_url = f"{str(self.zarr_root)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            ome_zarr_container = open_omezarr_container(zarr_url)
+            zarr_url = f"{str(self._zarr_selector.url)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
+            if self._zarr_selector._source_selector.value == "File":
+                store = zarr_url
+            else:
+                store = fractal_fsspec_store(
+                    zarr_url, fractal_token=self._zarr_selector.token
+                )
+            ome_zarr_container = open_omezarr_container(store)
             load_roi(
                 ome_zarr_container=ome_zarr_container,
                 viewer=self.viewer,
@@ -290,7 +304,7 @@ class ImgBrowser(Container):
                     top_left_corner,
                     bottom_right_corner,
                 ) = calculate_well_positions(
-                    plate_url=self.zarr_root,
+                    plate_url=self._zarr_selector.url,
                     row=well[0],
                     col=well[1],
                     is_plate=self.is_plate,
@@ -312,40 +326,35 @@ class ImgBrowser(Container):
             logger.info(msg)
             napari.utils.notifications.show_info(msg)
 
-    def load_table(self):
-        # FIXME: Switch to using table on the plate level
-        wells = _validate_wells(self.zarr_root, self.zarr_dict["well"])
-        wells_str = [f"{w[0]}{w[1]}" for w in wells]
-        tbl = []
-        n = len(wells)
+    def load_condition_table(self, table_name="condition"):
+        wells = self.zarr_plate.get_wells()
+        self.progress = ProgressBar(visible=False)
         self.progress.visible = True
         self.progress.min = 0
-        self.progress.max = n
+        self.progress.max = len(wells)
         self.progress.value = 0
-        name = "condition"
-        dataset = 0
-        while wells:
-            row_alpha, col = wells.pop()
+        all_tables = []
+        for well_path in self.zarr_plate.get_wells():
+            row = well_path.split("/")[0]
+            col = well_path.split("/")[1]
+            # Currently only loads condition tables from the first image
+            image = self.zarr_plate.get_well_images(row=row, column=col)[0]
             try:
-                # FIXME: Switch to using ngio to load condition tables?
-                tbl.append(
-                    ad.read_zarr(
-                        f"{self.zarr_root}/{row_alpha}/{col}/{dataset}/tables/{name}"
-                    )
-                )
-            except PathNotFoundError:
+                all_tables.append(image.get_table(name=table_name).dataframe)
+            except KeyError:
                 logger.info(
-                    f'The table "{name}" was not found in well {row_alpha}{col}'
+                    f'The table "{table_name}" was not found in well {row}{col}'
                 )
+
             self.progress.value += 1
         self.progress.visible = False
-        if tbl:
-            # FIXME: If we switch to ngio table loading, we'd now have pandas tables
-            # to handle here
-            if len(wells_str) > 1:
-                return ad.concat(tbl, keys=wells_str, index_unique="-")
-            else:
-                return ad.concat(tbl)
+        if len(all_tables) == 0:
+            msg = "No condition table is present in the OME-Zarr."
+            logger.info(msg)
+            napari.utils.notifications.show_info(msg)
+            return None
+        else:
+            return pd.concat(all_tables, ignore_index=True)
 
     def update_defaults(
         self,
@@ -369,68 +378,42 @@ class ImgBrowser(Container):
         self.btn_load_default_roi.enabled = True
 
 
-# FIXME: I don't really understand this function's scope and whether it will work on remote data
-def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
-    """Parse the OME-Zarr URL into a dictionary with the root URL, row, column and dataset
+# Deprecated searching for plate zarr url for now, assuming the user inputs it.
+# def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
+#     """Parse the OME-Zarr URL into a dictionary with the root URL, row, column and dataset
 
-    Args:
-        zarr_url: Path to the OME-Zarr
+#     Args:
+#         zarr_url: Path to the OME-Zarr
 
-    Returns:
-        Dictionary with root URL, row, column and dataset
-    """
-    zarr_dict = {
-        "root": None,
-        "row_alpha": None,
-        "row": None,
-        "col": None,
-        "well": None,
-        "dataset": None,
-    }
-    if zarr_url:
-        parts = [
-            p.replace("\\", "") for p in Path(zarr_url).parts
-        ]  # remove backslash escape character
-        root_idx = None
-        for i, p in enumerate(parts):
-            if p.endswith(".zarr"):
-                root_idx = i
-                zarr_dict["root"] = Path(*parts[0 : i + 1])
-            if root_idx and i == root_idx + 1:
-                zarr_dict["row_alpha"] = p
-                zarr_dict["row"] = alpha_to_numeric(p)
-            if root_idx and i == root_idx + 2:
-                zarr_dict["col"] = int(p)
-                zarr_dict["well"] = zarr_dict["row_alpha"] + p
-            if root_idx and i == root_idx + 3:
-                zarr_dict["dataset"] = int(p)
-    return zarr_dict
-
-
-def _validate_wells(
-    zarr_url: Union[str, Path], wells: Union[str, list[str], None]
-) -> set[tuple[str, int]]:
-    """Check that wells are formatted correctly
-
-    Args:
-        zarr_url: Path to the OME-Zarr
-        wells: A single well, a list of wells on a plate or None
-
-    Returns:
-        A unique set of alphanumeric tuples describing the wells
-    """
-    # FIXME: Reimplement with ngio, this function may not be needed anymore
-    if wells is not None:
-        wells = [wells] if isinstance(wells, str) else wells
-        wells = get_row_cols(wells)
-    else:
-        with zarr.open(zarr_url) as metadata:
-            matches = [
-                re.match(r"([A-Z][a-z]*)/(\d+)", well["path"])
-                for well in metadata.attrs["plate"]["wells"]
-            ]
-            wells = {(m.group(1), m.group(2)) for m in matches}
-    return wells
+#     Returns:
+#         Dictionary with root URL, row, column and dataset
+#     """
+#     zarr_dict = {
+#         "root": None,
+#         "row_alpha": None,
+#         "row": None,
+#         "col": None,
+#         "well": None,
+#         "dataset": None,
+#     }
+#     if zarr_url:
+#         parts = [
+#             p.replace("\\", "") for p in Path(zarr_url).parts
+#         ]  # remove backslash escape character
+#         root_idx = None
+#         for i, p in enumerate(parts):
+#             if p.endswith(".zarr"):
+#                 root_idx = i
+#                 zarr_dict["root"] = Path(*parts[0 : i + 1])
+#             if root_idx and i == root_idx + 1:
+#                 zarr_dict["row_alpha"] = p
+#                 zarr_dict["row"] = alpha_to_numeric(p)
+#             if root_idx and i == root_idx + 2:
+#                 zarr_dict["col"] = int(p)
+#                 zarr_dict["well"] = zarr_dict["row_alpha"] + p
+#             if root_idx and i == root_idx + 3:
+#                 zarr_dict["dataset"] = int(p)
+#     return zarr_dict
 
 
 def get_row_cols(well_list):

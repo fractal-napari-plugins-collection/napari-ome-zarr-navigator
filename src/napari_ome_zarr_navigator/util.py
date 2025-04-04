@@ -37,13 +37,14 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
         string.ascii_lowercase[numeric - 1]
 
 
-def calculate_well_positions(plate_url, row, col, is_plate=True):
+def calculate_well_positions(plate_store, row, col, is_plate=True):
+    # FIXME: Adapt to plate store
     zarr_plate = open_omezarr_plate(
-        plate_url, cache=True, parallel_safe=False, mode="r"
+        plate_store, cache=True, parallel_safe=False, mode="r"
     )
     # Load the first image of the selected well to get shape & pixel sizes
     # Makes the assumption that all images in all wells will have the same shapes
-    image_path = f"{plate_url}/{zarr_plate.get_image_path(row, col, zarr_plate.get_well(row, col).paths()[0])}"
+    image_path = f"{plate_store}/{zarr_plate.get_image_path(row, col, zarr_plate.get_well(row, col).paths()[0])}"
     ome_zarr_container = open_omezarr_container(image_path)
     level = ome_zarr_container.levels_paths[0]
     ome_zarr_image = ome_zarr_container.get_image(path=level)

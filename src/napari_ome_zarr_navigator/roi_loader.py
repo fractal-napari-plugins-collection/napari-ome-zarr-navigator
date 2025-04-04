@@ -1,6 +1,5 @@
 import logging
 import re
-from pathlib import Path
 
 import napari
 import napari.layers
@@ -17,7 +16,11 @@ from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
 from ngio import open_omezarr_container, open_omezarr_plate
 from ngio.common import WorldCooROI
-from ngio.utils import NgioFileNotFoundError, fractal_fsspec_store
+from ngio.utils import (
+    NgioFileNotFoundError,
+    StoreOrGroup,
+    fractal_fsspec_store,
+)
 from qtpy.QtCore import QObject, Signal
 
 from napari_ome_zarr_navigator.util import (
@@ -34,12 +37,10 @@ class ROILoader(Container):
     def __init__(
         self,
         viewer: napari.viewer.Viewer,
-        zarr_url: str = None,
         extra_widgets=None,
     ):
         self._viewer = viewer
         self.setup_logging()
-        self.zarr_url: Path = zarr_url
         self.channel_dict = {}
         self.channel_names_dict = {}
         self.labels_dict = {}
@@ -274,7 +275,6 @@ class ROILoaderImage(ROILoader):
             store = url
         else:
             store = fractal_fsspec_store(url, fractal_token=token)
-
         try:
             self.ome_zarr_container = open_omezarr_container(
                 store, mode="r", cache=True
@@ -288,14 +288,17 @@ class ROILoaderPlate(ROILoader):
     def __init__(
         self,
         viewer: napari.viewer.Viewer,
-        plate_url: str,
+        plate_store: StoreOrGroup,
         row: str,
         col: str,
         image_browser,
         is_plate: bool,
     ):
         self._zarr_picker = ComboBox(label="Image")
-        self.plate_url = plate_url.rstrip("/")
+        self.plate_store = plate_store
+        self.plate = open_omezarr_plate(
+            store=self.plate_store, cache=True, mode="r", parallel_safe=False
+        )
         self.row = row
         self.col = col
         self.image_browser = image_browser
@@ -315,7 +318,7 @@ class ROILoaderPlate(ROILoader):
 
         # Calculate base translation for a given well
         self.translation, _ = calculate_well_positions(
-            plate_url=plate_url, row=row, col=col, is_plate=is_plate
+            plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
 
         # # Handle defaults for plate loading
@@ -323,18 +326,17 @@ class ROILoaderPlate(ROILoader):
         #     self._roi_table_picker.value = "well_ROI_table"
 
     def get_available_ome_zarr_images(self):
-        plate = open_omezarr_plate(
-            store=self.plate_url, cache=True, mode="r", parallel_safe=False
-        )
-        well = plate.get_well(row=self.row, column=self.col)
+        well = self.plate.get_well(row=self.row, column=self.col)
         return well.paths()
 
     def update_image_selection(self):
-        self.zarr_url = (
-            f"{self.plate_url}/{self.row}/{self.col}/{self._zarr_picker.value}"
-        )
+        # FIXME: Use store for this instead of url
+        self.zarr_url = f"{self.plate_store}/{self.row}/{self.col}/{self._zarr_picker.value}"
+        # self.plate.get_well_images()
         try:
-            self.ome_zarr_container = open_omezarr_container(self.zarr_url)
+            self.ome_zarr_container = open_omezarr_container(
+                self.zarr_url, cache=True, mode="r"
+            )
         except (ValueError, NgioFileNotFoundError):
             self.ome_zarr_container = None
 
