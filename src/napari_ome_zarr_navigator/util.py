@@ -74,7 +74,7 @@ class NapariHandler(logging.Handler):
         show_info(log_entry)
 
 
-class SourceSelector(Container):
+class ZarrSelector(Container):
     def __init__(self, label="Input Source", file_mode="d", debounce_ms=500):
         # Source type selector
         self._source_selector = RadioButtons(

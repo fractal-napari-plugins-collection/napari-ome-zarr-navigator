@@ -27,7 +27,7 @@ from napari_ome_zarr_navigator.roi_loader import (
     remove_existing_label_layers,
 )
 from napari_ome_zarr_navigator.util import (
-    SourceSelector,
+    ZarrSelector,
     alpha_to_numeric,
     calculate_well_positions,
 )
@@ -39,7 +39,7 @@ logging.getLogger("ome_zarr").setLevel(logging.WARN)
 class ImgBrowser(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         self.viewer = viewer
-        self._source_selector = SourceSelector()
+        self._zarr_selector = ZarrSelector()
         # self.zarr_dir = FileEdit(
         #     label="OME-Zarr URL", mode="d", filter="*.zarr"
         # )
@@ -71,7 +71,7 @@ class ImgBrowser(Container):
 
         super().__init__(
             widgets=[
-                self._source_selector,
+                self._zarr_selector,
                 self.well,
                 self.progress,
                 Container(
@@ -85,18 +85,18 @@ class ImgBrowser(Container):
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
         self.filter_names = None
-        self._source_selector.on_change(self.initialize_filters)
-        self._source_selector.on_change(self.filter_df)
+        self._zarr_selector.on_change(self.initialize_filters)
+        self._zarr_selector.on_change(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def initialize_filters(self):
-        self.zarr_dict = parse_zarr_url(self._source_selector.url)
+        self.zarr_dict = parse_zarr_url(self._zarr_selector.url)
         self.zarr_root = self.zarr_dict["root"]
 
-        if self.zarr_root == self._source_selector.url:
+        if self.zarr_root == self._zarr_selector.url:
             self.is_plate = True
         else:
             self.is_plate = False
@@ -174,7 +174,7 @@ class ImgBrowser(Container):
 
     def check_empty_layerlist(self):
         if len(self.viewer.layers) == 0:
-            self._source_selector.set_url("")
+            self._zarr_selector.set_url("")
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
             self.df = pd.DataFrame()
@@ -190,9 +190,9 @@ class ImgBrowser(Container):
         if active and active.as_layer_data_tuple()[-1] == "image":
             path = self.viewer.layers.selection.active.source.path
             if path:
-                self._source_selector.set_url(path)
+                self._zarr_selector.set_url(path)
             if "sample_path" in self.viewer.layers.selection.active.metadata:
-                self._source_selector.set_url(
+                self._zarr_selector.set_url(
                     self.viewer.layers.selection.active.metadata["sample_path"]
                 )
 

@@ -22,7 +22,7 @@ from qtpy.QtCore import QObject, Signal
 
 from napari_ome_zarr_navigator.util import (
     NapariHandler,
-    SourceSelector,
+    ZarrSelector,
     calculate_well_positions,
 )
 
@@ -242,24 +242,32 @@ class ROILoader(Container):
 
 
 class ROILoaderImage(ROILoader):
-    def __init__(self, viewer: napari.viewer.Viewer, zarr_url: str = None):
-        self._source_selector = SourceSelector()
+    def __init__(
+        self,
+        viewer: napari.viewer.Viewer,
+        zarr_url: str = None,
+        token: str = None,
+    ):
+        self.zarr_selector = ZarrSelector()
 
         super().__init__(
             viewer=viewer,
-            extra_widgets=[self._source_selector],
+            extra_widgets=[self.zarr_selector],
         )
 
-        self._source_selector.on_change(self.update_image_selection)
+        self.zarr_selector.on_change(self.update_image_selection)
 
         # Set initial value if provided
-        # if zarr_url:
-        #     self._zarr_url_picker.value = zarr_url
+        if zarr_url:
+            if token:
+                self.zarr_selector.set_url(zarr_url, token=token)
+            else:
+                self.zarr_selector.set_url(zarr_url)
 
     def update_image_selection(self):
-        source = self._source_selector.source
-        url = self._source_selector.url
-        token = self._source_selector.token
+        source = self.zarr_selector.source
+        url = self.zarr_selector.url
+        token = self.zarr_selector.token
 
         self.zarr_url = url
         if source == "File":

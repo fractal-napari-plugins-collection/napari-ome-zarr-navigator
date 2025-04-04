@@ -3,6 +3,7 @@ import numpy as np
 from napari_ome_zarr_navigator.img_browser import ImgBrowser
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoader,
+    ROILoaderImage,
     ROILoaderPlate,
 )
 
@@ -26,17 +27,60 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
         is_plate=True,
     )
     with qtbot.waitSignal(
-        roi_loader.image_changed_event.roi_tables_updated, timeout=100
+        roi_loader.image_changed_event.roi_tables_updated, timeout=5000
     ):
         pass
 
     with qtbot.waitSignal(
-        roi_loader.image_changed_event.roi_choices_updated, timeout=100
+        roi_loader.image_changed_event.roi_choices_updated, timeout=5000
     ):
         pass
 
     assert roi_loader._zarr_picker.choices == ("0",)
     assert roi_loader._zarr_picker.value == "0"
-    # time.sleep(5)
-    # roi_loader.run()
-    # print(roi_loader.ome_zarr_container)
+
+    # Set parameters
+    roi_loader._roi_table_picker.value = "FOV_ROI_table"
+    roi_loader._roi_picker.value = "FOV_1"
+    roi_loader._channel_picker.value = ["DAPI"]
+    roi_loader._level_picker.value = "0"
+    roi_loader._label_picker.value = ["nuclei"]
+    roi_loader._feature_picker.value = ["measurements"]
+    roi_loader._remove_old_labels_box.value = False
+
+    roi_loader.run()
+
+    # TODO: Test that layers got added and that label layer has features
+
+
+def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
+    viewer = make_napari_viewer()
+    zarr_url = f"{zenodo_zarr[0]}/B/03/0"
+    roi_loader = ROILoaderImage(
+        viewer,
+        zarr_url=zarr_url,
+    )
+    with qtbot.waitSignal(
+        roi_loader.image_changed_event.roi_tables_updated, timeout=5000
+    ):
+        pass
+
+    with qtbot.waitSignal(
+        roi_loader.image_changed_event.roi_choices_updated, timeout=5000
+    ):
+        pass
+
+    assert str(roi_loader.zarr_selector._file_picker.value) == str(zarr_url)
+
+    # Set parameters
+    roi_loader._roi_table_picker.value = "FOV_ROI_table"
+    roi_loader._roi_picker.value = "FOV_1"
+    roi_loader._channel_picker.value = ["DAPI"]
+    roi_loader._level_picker.value = "0"
+    roi_loader._label_picker.value = ["nuclei"]
+    roi_loader._feature_picker.value = ["measurements"]
+    roi_loader._remove_old_labels_box.value = False
+
+    roi_loader.run()
+
+    # TODO: Test that layers got added and that label layer has features
