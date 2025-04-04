@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextlib
 import logging
 import string
 from typing import Optional
@@ -89,19 +90,22 @@ class SourceSelector(Container):
         # HTTP inputs
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
-        self._http_token.native.setEchoMode(2)  # hide token display
+        with contextlib.suppress(TypeError):
+            self._http_token.native.setEchoMode(2)  # hide token display
 
         # Stacked input fields
-        self._stack = Container(widgets=[self._file_picker])
+        self._stack = Container(
+            widgets=[self._file_picker, self._http_url, self._http_token]
+        )
+        # Initially hide the HTTP fields
+        self._http_url.hide()
+        self._http_token.hide()
 
         # Assemble the container
         self._main = Container(
             widgets=[Label(value=label), self._source_selector, self._stack]
         )
         super().__init__(widgets=[self._main])
-        # Stop magicgui from making pop-ups of those widgets
-        self.callable = False
-        self._main.callable = False
 
         # Debounce timer: Avoids reloading while someone modifies the URL
         self._timer = QTimer()
@@ -119,11 +123,14 @@ class SourceSelector(Container):
         self._callbacks = []
 
     def _on_source_changed(self, value):
-        self._stack.clear()
         if value == "File":
-            self._stack.extend([self._file_picker])
+            self._file_picker.show()
+            self._http_url.hide()
+            self._http_token.hide()
         else:
-            self._stack.extend([self._http_url, self._http_token])
+            self._file_picker.hide()
+            self._http_url.show()
+            self._http_token.show()
         self._emit_changed()
 
     def _restart_timer(self, *args):

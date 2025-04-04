@@ -87,10 +87,8 @@ class ImgBrowser(Container):
         self.filter_names = None
         self._source_selector.on_change(self.initialize_filters)
         self._source_selector.on_change(self.filter_df)
-        # self.zarr_dir.changed.connect(self.initialize_filters)
-        # self.zarr_dir.changed.connect(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
-        self.btn_load_roi.clicked.connect(self.load_roi)
+        self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
@@ -220,7 +218,7 @@ class ImgBrowser(Container):
             if len(wells) > 0:
                 self.well.value = wells[0]
 
-    def load_roi(self):
+    def launch_load_roi(self):
         wells = get_row_cols(self.well.value)
         if len(wells) != 1:
             msg = "Please select a single well."
@@ -315,6 +313,7 @@ class ImgBrowser(Container):
             napari.utils.notifications.show_info(msg)
 
     def load_table(self):
+        # FIXME: Switch to using table on the plate level
         wells = _validate_wells(self.zarr_root, self.zarr_dict["well"])
         wells_str = [f"{w[0]}{w[1]}" for w in wells]
         tbl = []
@@ -420,6 +419,7 @@ def _validate_wells(
     Returns:
         A unique set of alphanumeric tuples describing the wells
     """
+    # FIXME: Reimplement with ngio, this function may not be needed anymore
     if wells is not None:
         wells = [wells] if isinstance(wells, str) else wells
         wells = get_row_cols(wells)

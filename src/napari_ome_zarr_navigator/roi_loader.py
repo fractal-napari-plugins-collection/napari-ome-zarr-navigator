@@ -216,7 +216,6 @@ class ROILoader(Container):
         labels = self._label_picker.value
         features = self._feature_picker.value
         blending = None
-
         if len(channels) < 1 and len(labels) < 1:
             logger.info(
                 "No channel or labels selected. "
@@ -346,15 +345,6 @@ class ROILoaderPlate(ROILoader):
 
 
 class ROILoaderSignals(QObject):
-    # def __init__(self):
-    #     self.handlers = []
-
-    # def connect(self, handler):
-    #     self.handlers.append(handler)
-
-    # def emit(self, *args, **kwargs):
-    #     for handler in self.handlers:
-    #         handler(*args, **kwargs)
     image_changed = Signal(object)
     roi_choices_updated = Signal(list)
     roi_tables_updated = Signal(list)
