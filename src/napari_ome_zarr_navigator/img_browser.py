@@ -364,7 +364,6 @@ class ImgBrowser(Container):
 
     def load_condition_table(self, table_name="condition"):
         wells = self.zarr_plate.get_wells()
-        self.progress = ProgressBar(visible=False)
         self.progress.visible = True
         self.progress.min = 0
         self.progress.max = len(wells)
