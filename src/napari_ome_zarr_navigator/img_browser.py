@@ -152,13 +152,11 @@ class ImgBrowser(Container):
     def set_all_wells_for_selection(self):
         wells = []
         dfs = []
-        # FIXME: Refactor to not load well objects, just well row/col metadata
-        # based on plate object
-        for well_path in self.zarr_plate.get_wells():
-            row = well_path.split("/")[0]
-            col = well_path.split("/")[1]
+        for well in self.zarr_plate.wells_paths():
+            row, col = well.split("/")
             wells.append(f"{row}{col}")
             dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
+        # TODO: Use fancier sorting that handles non-zero padded column names
         wells_str = sorted(wells)
         self.well.choices = wells_str
         self.well._default_choices = wells_str
