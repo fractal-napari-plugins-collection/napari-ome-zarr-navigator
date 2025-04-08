@@ -32,7 +32,6 @@ from napari_ome_zarr_navigator.util import (
 )
 
 logger = logging.getLogger(__name__)
-logging.getLogger("ome_zarr").setLevel(logging.WARN)
 
 
 class ImgBrowser(Container):

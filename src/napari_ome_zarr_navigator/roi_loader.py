@@ -18,6 +18,7 @@ from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.common import Roi
 from ngio.utils import (
     NgioFileNotFoundError,
+    NgioValidationError,
     StoreOrGroup,
     fractal_fsspec_store,
 )
@@ -182,11 +183,17 @@ class ROILoader(Container):
         if new_zarr_img:
             channels = self.ome_zarr_container.image_meta.channel_labels
             levels = self.ome_zarr_container.levels_paths
-            labels = self.ome_zarr_container.list_labels()
+            try:
+                labels = self.ome_zarr_container.list_labels()
+            except NgioValidationError:
+                labels = []
             # ngio version now strictly only loads feature tables
-            features = self.ome_zarr_container.tables_container.list(
-                filter_types="feature_table"
-            )
+            try:
+                features = self.ome_zarr_container.tables_container.list(
+                    filter_types="feature_table"
+                )
+            except NgioValidationError:
+                features = []
             self.set_available_image_attrs(channels, levels, labels, features)
         else:
             # If zarr image was set to None, reset all selectors

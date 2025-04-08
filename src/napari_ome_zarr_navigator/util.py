@@ -70,7 +70,6 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
         top_left_corner[0] + scale[0] * shape[0],
         top_left_corner[1] + scale[1] * shape[1],
     ]
-
     return top_left_corner, bottom_right_corner
 
 

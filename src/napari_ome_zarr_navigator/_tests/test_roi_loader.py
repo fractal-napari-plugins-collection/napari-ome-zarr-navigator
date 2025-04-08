@@ -18,7 +18,7 @@ def test_roi_loader_init(make_napari_viewer):
 
 def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
     viewer = make_napari_viewer()
-    plate_url = zenodo_zarr[0]
+    plate_url = zenodo_zarr[1]
     image_browser = ImgBrowser(viewer=viewer)
     roi_loader = ROILoaderPlate(
         viewer,
@@ -57,7 +57,8 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
 
 def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     viewer = make_napari_viewer()
-    zarr_url = Path(zenodo_zarr[0]) / "B" / "03" / "0"
+    zarr_url = Path(zenodo_zarr[1]) / "B" / "03" / "0"
+    print(zarr_url)
     roi_loader = ROILoaderImage(
         viewer,
         zarr_url=str(zarr_url),
@@ -73,6 +74,15 @@ def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
         pass
 
     assert str(roi_loader.zarr_selector._file_picker.value) == str(zarr_url)
+
+    # Check parameters
+    assert roi_loader._roi_table_picker.value == "FOV_ROI_table"
+    assert roi_loader._roi_picker.value == "FOV_1"
+    assert roi_loader._channel_picker.choices == ("DAPI", "nanog", "Lamin B1")
+    assert roi_loader._level_picker.value == "0"
+    assert roi_loader._label_picker.choices == ("nuclei",)
+    assert roi_loader._feature_picker.choices == ("measurements",)
+    assert not roi_loader._remove_old_labels_box.value
 
     # Set parameters
     roi_loader._roi_table_picker.value = "FOV_ROI_table"
