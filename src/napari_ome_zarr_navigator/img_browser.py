@@ -51,6 +51,9 @@ class ImgBrowser(Container):
             tooltip="Once you've loaded a ROI with the 'Select ROI to load' "
             "button, this allows you to load the same ROI for different wells.",
         )
+        self._load_condition_tables = CheckBox(
+            value=False, text="Load condition tables"
+        )
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
@@ -65,6 +68,7 @@ class ImgBrowser(Container):
         self.remove_old_labels = False
         self.zarr_plate = None
         self.plate_store = None
+        self.df = None  # Dataframe for condition table
 
         super().__init__(
             widgets=[
@@ -76,6 +80,7 @@ class ImgBrowser(Container):
                     label="Zoom level",
                     layout="horizontal",
                 ),
+                self._load_condition_tables,
                 self.btn_load_roi,
                 self.btn_load_default_roi,
             ],
@@ -87,6 +92,8 @@ class ImgBrowser(Container):
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
+        self._load_condition_tables.changed.connect(self.initialize_filters)
+        self._load_condition_tables.changed.connect(self.filter_df)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
 
     def open_zarr_plate(self):
@@ -115,72 +122,25 @@ class ImgBrowser(Container):
 
     def initialize_filters(self):
         # Check if the zarr_url is empty & finish early
-        if self._zarr_selector.url is None or self._zarr_selector.url == ".":
+        if (
+            self._zarr_selector.url is None
+            or self._zarr_selector.url == "."
+            or self._zarr_selector.url == ""
+        ):
+            self.is_plate = False
+            self.select_well.enabled = False
+            self.btn_load_roi.enabled = False
             return
 
         self.open_zarr_plate()
-        # TODO Initialize zarr_dir & zarr_root?
         if self.zarr_plate:
             self.is_plate = True
-            self.df = self.load_condition_table()
+            if self._load_condition_tables.value:
+                self.df = self.load_condition_table()
             if self.df is not None:
-                self.df_without_pk = self.df.drop(
-                    columns=["row", "col"]
-                )  # .apply(pd.to_numeric, errors="ignore")
-                # Casting to numeric with error ignore is deprecated.
-                # What would the point of it be??
-                self.df = pd.concat(
-                    (self.df[["row", "col"]], self.df_without_pk), axis=1
-                )
-                self.filter_names = self.df_without_pk.columns
-
-                self.filters = Container(
-                    widgets=[
-                        Container(
-                            widgets=[
-                                ComboBox(
-                                    choices=self.df_without_pk[filter_name]
-                                    .sort_values()
-                                    .unique(),
-                                    enabled=False,
-                                ),
-                                CheckBox(label=filter_name, value=False),
-                            ],
-                            layout="horizontal",
-                        )
-                        for filter_name in self.filter_names
-                    ],
-                    layout="vertical",
-                )
-                if self.filter_widget:
-                    with suppress(RuntimeError):
-                        self.viewer.window.remove_dock_widget(
-                            self.filter_widget
-                        )
-
-                self.filter_widget = self.viewer.window.add_dock_widget(
-                    widget=self.filters,
-                    name="Filters",
-                )
-
-                for i in range(len(self.filter_names)):
-                    self.filters[i][1].changed.connect(self.toggle_filter(i))
-                    self.filters[i][0].changed.connect(self.filter_df)
-                    self.filters[i][1].changed.connect(self.filter_df)
+                self.set_filtered_wells_for_selection()
             else:
-                wells = []
-                dfs = []
-                for well_path in self.zarr_plate.get_wells():
-                    row = well_path.split("/")[0]
-                    col = well_path.split("/")[1]
-                    wells.append(f"{row}{col}")
-                    dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
-                wells_str = sorted(wells)
-                self.well.choices = wells_str
-                self.well._default_choices = wells_str
-                self.df = pd.concat(dfs, ignore_index=True)
-                self.filter_names = None
-                self.well.value = wells_str[0]
+                self.set_all_wells_for_selection()
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
@@ -188,6 +148,67 @@ class ImgBrowser(Container):
             self.is_plate = False
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+
+    def set_all_wells_for_selection(self):
+        wells = []
+        dfs = []
+        # FIXME: Refactor to not load well objects, just well row/col metadata
+        # based on plate object
+        for well_path in self.zarr_plate.get_wells():
+            row = well_path.split("/")[0]
+            col = well_path.split("/")[1]
+            wells.append(f"{row}{col}")
+            dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
+        wells_str = sorted(wells)
+        self.well.choices = wells_str
+        self.well._default_choices = wells_str
+        self.df = pd.concat(dfs, ignore_index=True)
+        self.filter_names = None
+        self.well.value = wells_str[0]
+
+    def set_filtered_wells_for_selection(self):
+        self.df_without_pk = self.df.drop(
+            columns=["row", "col"]
+        )  # .apply(pd.to_numeric, errors="ignore")
+        # Casting to numeric with error ignore is deprecated.
+        # What would the point of it be??
+        self.df = pd.concat(
+            (self.df[["row", "col"]], self.df_without_pk), axis=1
+        )
+        self.filter_names = self.df_without_pk.columns
+
+        self.filters = Container(
+            widgets=[
+                Container(
+                    widgets=[
+                        ComboBox(
+                            choices=self.df_without_pk[filter_name]
+                            .sort_values()
+                            .unique(),
+                            enabled=False,
+                        ),
+                        CheckBox(label=filter_name, value=False),
+                    ],
+                    layout="horizontal",
+                )
+                for filter_name in self.filter_names
+            ],
+            layout="vertical",
+        )
+        # TODO: Improve adding/removing behavior of dockwidget
+        if self.filter_widget:
+            with suppress(RuntimeError):
+                self.viewer.window.remove_dock_widget(self.filter_widget)
+
+        self.filter_widget = self.viewer.window.add_dock_widget(
+            widget=self.filters,
+            name="Filters",
+        )
+
+        for i in range(len(self.filter_names)):
+            self.filters[i][1].changed.connect(self.toggle_filter(i))
+            self.filters[i][0].changed.connect(self.filter_df)
+            self.filters[i][1].changed.connect(self.filter_df)
 
     def toggle_filter(self, i):
         def toggle_on_change():
