@@ -18,7 +18,6 @@ from napari.utils.colormaps import Colormap
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.common import Roi
 from ngio.utils import (
-    NgioFileNotFoundError,
     NgioValidationError,
     StoreOrGroup,
     fractal_fsspec_store,
@@ -322,6 +321,20 @@ class ROILoader(Container):
         # and disable the run button
         self.state = LoaderState.INITIALIZING
 
+    @thread_worker
+    def _load_container(self, store):
+        """Threaded open_ome_zarr_container."""
+        return open_ome_zarr_container(store, mode="r", cache=True)
+
+    def _on_image_container_ready(self, container):
+        # on main thread, assign and kick off your init sequence
+        self.ome_zarr_container = container
+
+    def _on_image_container_error(self, exc: Exception):
+        logger.error(f"Error while loading image: {exc}")
+        self.ome_zarr_container = None
+        self.reset_widgets()
+
     def run(self):
         # TODO: Refactor to use thread worker
         # (but keep it callable from img_browser class)
@@ -388,6 +401,7 @@ class ROILoaderImage(ROILoader):
         token = self.zarr_selector.token
 
         if self.zarr_url in ("", ".", None):
+            self._ome_zarr_container = None
             self.reset_widgets()
             return
 
@@ -396,14 +410,10 @@ class ROILoaderImage(ROILoader):
         else:
             store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
 
-        try:
-            self.ome_zarr_container = open_ome_zarr_container(
-                store, mode="r", cache=True
-            )
-        except (ValueError, NgioFileNotFoundError) as e:
-            logger.error(f"Error while loading image: {e}")
-            self.ome_zarr_container = None
-            self.reset_widgets()
+        worker = self._load_container(store)
+        worker.returned.connect(self._on_image_container_ready)
+        worker.errored.connect(self._on_image_container_error)
+        worker.start()
 
 
 class ROILoaderPlate(ROILoader):
@@ -455,12 +465,10 @@ class ROILoaderPlate(ROILoader):
         image_store = self.plate.get_image_store(
             row=self.row, column=self.col, image_path=self._zarr_picker.value
         )
-        try:
-            self.ome_zarr_container = open_ome_zarr_container(
-                image_store, cache=True, mode="r"
-            )
-        except (ValueError, NgioFileNotFoundError):
-            self.ome_zarr_container = None
+        worker = self._load_container(image_store)
+        worker.returned.connect(self._on_image_container_ready)
+        worker.errored.connect(self._on_image_container_error)
+        worker.start()
 
     def _update_defaults(self):
         "Updates Image Browser default when ROIs are loaded"
