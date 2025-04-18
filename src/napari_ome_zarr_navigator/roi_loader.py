@@ -176,7 +176,10 @@ class ROILoader(Container):
         # (1) Start ROI‐tables lookup:
         @thread_worker
         def _get_tables():
-            return self.ome_zarr_container.list_roi_tables()
+            if self.ome_zarr_container is not None:
+                return self.ome_zarr_container.list_roi_tables()
+            else:
+                return [""]
 
         tbl_worker = _get_tables()
         tbl_worker.returned.connect(self._on_tables_ready)
@@ -216,10 +219,13 @@ class ROILoader(Container):
         """
         Worker that returns the list of ROI names for the given table.
         """
-        ngio_table = self.ome_zarr_container.get_table(
-            name=table_name, check_type="generic_roi_table"
-        )
-        return [r.name for r in ngio_table.rois()]
+        if self.ome_zarr_container is not None:
+            ngio_table = self.ome_zarr_container.get_table(
+                name=table_name, check_type="generic_roi_table"
+            )
+            return [r.name for r in ngio_table.rois()]
+        else:
+            return [""]
 
     def update_roi_selection(self):
         """
@@ -297,6 +303,24 @@ class ROILoader(Container):
         # Initialize available features
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
+
+    def reset_widgets(self):
+        """Clear out all dropdowns & go back to an uninitialized state."""
+        # ROI tables + names
+        for picker in (self._roi_table_picker, self._roi_picker):
+            picker.choices = []
+            picker._default_choices = []
+        # channels, levels, labels, features
+        for picker in (
+            self._channel_picker,
+            self._level_picker,
+            self._label_picker,
+            self._feature_picker,
+        ):
+            picker.choices = []
+            picker._default_choices = []
+        # and disable the run button
+        self.state = LoaderState.INITIALIZING
 
     def run(self):
         # TODO: Refactor to use thread worker
@@ -379,24 +403,7 @@ class ROILoaderImage(ROILoader):
         except (ValueError, NgioFileNotFoundError) as e:
             logger.error(f"Error while loading image: {e}")
             self.ome_zarr_container = None
-
-    def reset_widgets(self):
-        """Clear out all dropdowns & go back to an uninitialized state."""
-        # ROI tables + names
-        for picker in (self._roi_table_picker, self._roi_picker):
-            picker.choices = []
-            picker._default_choices = []
-        # channels, levels, labels, features
-        for picker in (
-            self._channel_picker,
-            self._level_picker,
-            self._label_picker,
-            self._feature_picker,
-        ):
-            picker.choices = []
-            picker._default_choices = []
-        # and disable the run button
-        self.state = LoaderState.INITIALIZING
+            self.reset_widgets()
 
 
 class ROILoaderPlate(ROILoader):
