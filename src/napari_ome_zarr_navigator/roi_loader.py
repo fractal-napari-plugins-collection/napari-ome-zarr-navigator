@@ -360,18 +360,17 @@ class ROILoaderImage(ROILoader):
 
     def update_image_selection(self):
         source = self.zarr_selector.source
-        url = self.zarr_selector.url
+        self.zarr_url = self.zarr_selector.url
         token = self.zarr_selector.token
 
-        self.zarr_url = url
+        if self.zarr_url in ("", ".", None):
+            self.reset_widgets()
+            return
+
         if source == "File":
-            store = url
-            if store == ".":
-                return
+            store = self.zarr_url
         else:
-            if url == "":
-                return
-            store = fractal_fsspec_store(url, fractal_token=token)
+            store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
 
         try:
             self.ome_zarr_container = open_ome_zarr_container(
@@ -380,6 +379,24 @@ class ROILoaderImage(ROILoader):
         except (ValueError, NgioFileNotFoundError) as e:
             logger.error(f"Error while loading image: {e}")
             self.ome_zarr_container = None
+
+    def reset_widgets(self):
+        """Clear out all dropdowns & go back to an uninitialized state."""
+        # ROI tables + names
+        for picker in (self._roi_table_picker, self._roi_picker):
+            picker.choices = []
+            picker._default_choices = []
+        # channels, levels, labels, features
+        for picker in (
+            self._channel_picker,
+            self._level_picker,
+            self._label_picker,
+            self._feature_picker,
+        ):
+            picker.choices = []
+            picker._default_choices = []
+        # and disable the run button
+        self.state = LoaderState.INITIALIZING
 
 
 class ROILoaderPlate(ROILoader):
