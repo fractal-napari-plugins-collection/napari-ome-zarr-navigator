@@ -1,11 +1,7 @@
 import logging
-import re
-from enum import Enum, auto
 
 import napari
-import napari.layers
 import ngio
-import numpy as np
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -14,17 +10,21 @@ from magicgui.widgets import (
     Select,
 )
 from napari.qt.threading import thread_worker
-from napari.utils.colormaps import Colormap
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from ngio.common import Roi
 from ngio.utils import (
     NgioValidationError,
     StoreOrGroup,
     fractal_fsspec_store,
 )
-from qtpy.QtCore import QObject, QTimer, Signal
+from qtpy.QtCore import QTimer
 
+from napari_ome_zarr_navigator.roi_loading_utils import (
+    ROILoaderSignals,
+    orchestrate_load_roi,
+    remove_existing_label_layers,
+)
 from napari_ome_zarr_navigator.util import (
+    LoaderState,
     NapariHandler,
     ZarrSelector,
     calculate_well_positions,
@@ -32,12 +32,6 @@ from napari_ome_zarr_navigator.util import (
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
-class LoaderState(Enum):
-    INITIALIZING = auto()
-    READY = auto()
-    LOADING = auto()
 
 
 class ROILoader(Container):
@@ -336,16 +330,15 @@ class ROILoader(Container):
         self.reset_widgets()
 
     def run(self):
-        # TODO: Refactor to use thread worker
-        # (but keep it callable from img_browser class)
-        self.state = LoaderState.LOADING
-        roi_table = self._roi_table_picker.value
-        roi_name = self._roi_picker.value
-        level = self._level_picker.value
+        if not self.ome_zarr_container:
+            return
+        rt, rn = self._roi_table_picker.value, self._roi_picker.value
         channels = self._channel_picker.value
+        level = self._level_picker.value
         labels = self._label_picker.value
         features = self._feature_picker.value
-        blending = None
+        translation = self.translation
+
         if len(channels) < 1 and len(labels) < 1:
             logger.info(
                 "No channel or labels selected. "
@@ -353,23 +346,29 @@ class ROILoader(Container):
             )
             return
 
+        if len(labels) < 1 and len(features) > 0:
+            logger.info(
+                "No labels selected to attach features to. "
+                "Select the labels you want to load."
+            )
+            return
+
         if self._remove_old_labels_box.value:
             remove_existing_label_layers(self._viewer)
 
-        load_roi(
-            ome_zarr_container=self.ome_zarr_container,
-            viewer=self._viewer,
-            roi_table=roi_table,
-            roi_name=roi_name,
+        orchestrate_load_roi(
+            self.ome_zarr_container,
+            self._viewer,
+            roi_table=rt,
+            roi_name=rn,
             layer_base_name=self.layer_base_name,
-            channels=channels,
             level=level,
+            channels=channels,
             labels=labels,
             features=features,
-            translation=self.translation,
-            blending=blending,
+            translation=translation,
+            set_state_fn=lambda state: setattr(self, "state", state),
         )
-        self.state = LoaderState.READY
 
 
 class ROILoaderImage(ROILoader):
@@ -482,275 +481,3 @@ class ROILoaderPlate(ROILoader):
             features=self._feature_picker.value,
             remove_old_labels=self._remove_old_labels_box.value,
         )
-
-
-class ROILoaderSignals(QObject):
-    image_changed = Signal(object)
-    roi_choices_updated = Signal(list)
-    roi_tables_updated = Signal(list)
-
-    def __init__(self):
-        super().__init__()
-
-
-def load_roi(
-    ome_zarr_container: ngio.OmeZarrContainer,
-    viewer,
-    roi_table: str,
-    roi_name: str,
-    layer_base_name: str,
-    channels: list = None,
-    level: str = "0",
-    labels: list = None,
-    features: list = None,
-    translation: tuple = (0, 0),
-    blending: str = None,
-    lazy: bool = False,
-):
-    """
-    Load images, labels & tables of a given ROI & add to viewer
-
-    Args:
-        ome_zarr_container: OME-Zarr object to be loaded
-        viewer: napari viewer object
-        roi_table: Name of the ROI table to load a ROI from
-            (e.g. "well_ROI_table")
-        roi_name: Name of the ROI within the roi_table to load
-        layer_base_name: Base name for the layers to be added
-        channels: List of intensity channels to load
-        level: Resolution level to load
-        labels: List of labels to load
-        translation: Translation to apply to all loaded ROIs (typically the
-            translation to shift it to the correct well in a plate setting)
-        blending: Blending for the first intensity image to be used
-        lazy: Whether to use dask for lazy loading
-
-    """
-    # Get translation within the larger image based on the ROI table
-    label_layers = {}
-
-    ngio_roi_table = ome_zarr_container.get_table(
-        roi_table, check_type="generic_roi_table"
-    )
-    curr_roi = ngio_roi_table.get(roi_name)
-
-    roi_translation = (
-        translation[0] + curr_roi.y,
-        translation[1] + curr_roi.x,
-    )
-
-    # Set layer names
-    if len(ngio_roi_table.rois()) == 1:
-        layer_base_name = layer_base_name
-    else:
-        layer_base_name = f"{layer_base_name}{roi_name}_"
-
-    # Load intensity images
-    img_pixel_size = None
-    if channels:
-        for channel in channels:
-            add_intensity_roi(
-                ome_zarr_container,
-                viewer,
-                channel,
-                roi=curr_roi,
-                level=level,
-                blending=blending,
-                translate=roi_translation,
-                layer_name=f"{layer_base_name}{channel}",
-                lazy=lazy,
-            )
-            blending = "additive"
-
-        img_pixel_size = ome_zarr_container.get_image(path=level).pixel_size
-    # Load labels
-    for label in labels:
-        if img_pixel_size:
-            ngio_label = ome_zarr_container.get_label(
-                name=label,
-                pixel_size=img_pixel_size,
-                strict=False,
-            )
-        else:
-            ngio_label = ome_zarr_container.get_label(name=label, path=level)
-        if lazy:
-            label_roi = ngio_label.get_roi(roi=curr_roi, mode="dask").squeeze()
-        else:
-            label_roi = np.squeeze(
-                ngio_label.get_roi(roi=curr_roi, mode="numpy")
-            )
-
-        # FIXME: load only relevant pixel size in case image is 2D
-
-        if len(label_roi.shape) == 3:
-            z, y, x = ngio_label.pixel_size.zyx
-            scale_label = (z, y, x)
-        elif len(label_roi.shape) == 2:
-            y, x = ngio_label.pixel_size.yx
-            scale_label = (y, x)
-        else:
-            raise NotImplementedError(
-                "ROI loading has not been implemented for ROIs of shape "
-                f"{len(label_roi.shape)} yet."
-            )
-
-        layer_name = f"{layer_base_name}{label}"
-        if layer_name in viewer.layers:
-            logger.info(f"{layer_name} is already loaded")
-            label_layers[label] = viewer.layers[layer_name]
-        else:
-            label_layers[label] = viewer.add_labels(
-                label_roi,
-                scale=scale_label,
-                name=layer_name,
-                translate=roi_translation,
-            )
-
-    # Load features
-    for table_name in features:
-        label_layer = find_matching_label_layer(
-            ome_zarr_container, table_name, label_layers
-        )
-        add_feature_table_to_layer(
-            ome_zarr_container,
-            table_name,
-            label_layer,
-            roi_name,
-        )
-
-
-def add_intensity_roi(
-    ome_zarr_container: ngio.OmeZarrContainer,
-    viewer,
-    channel: str,
-    roi: Roi,
-    level: str,
-    blending: str,
-    translate: tuple[float, float],
-    layer_name: str = "",
-    lazy: bool = False,
-):
-    channel_index = ome_zarr_container.image_meta.get_channel_idx(channel)
-    ngio_img = ome_zarr_container.get_image(path=level)
-    if lazy:
-        # FIXME: Better handling of dropping channel dimension
-        img_roi = ngio_img.get_roi(
-            roi=roi, c=channel_index, mode="dask"
-        ).squeeze()
-    else:
-        # FIXME: Better handling of dropping channel dimension
-        img_roi = np.squeeze(
-            ngio_img.get_roi(roi=roi, c=channel_index, mode="numpy")
-        )
-
-    if len(img_roi.shape) == 3:
-        z, y, x = ngio_img.pixel_size.zyx
-        scale_img = (z, y, x)
-    elif len(img_roi.shape) == 2:
-        y, x = ngio_img.pixel_size.yx
-        scale_img = (y, x)
-    else:
-        raise NotImplementedError(
-            "ROI loading has not been implemented for ROIs of shape "
-            f"{len(img_roi.shape)} yet."
-        )
-
-    if not np.any(img_roi):
-        return
-
-    # Get channel omero metadata
-
-    channel_visualisation = ome_zarr_container.image_meta.channels[
-        channel_index
-    ].channel_visualisation
-    try:
-        # Colormap creation needs to have this black initial color for
-        # background
-        colormap = Colormap(
-            ["#000000", f"#{channel_visualisation.color}"],
-            name=channel_visualisation.color,
-        )
-    except AttributeError:
-        colormap = None
-    try:
-        rescaling = (
-            channel_visualisation.start,
-            channel_visualisation.end,
-        )
-    except AttributeError:
-        rescaling = None
-
-    if layer_name in viewer.layers:
-        logger.info(f"{layer_name} is already loaded")
-    else:
-        viewer.add_image(
-            img_roi,
-            scale=scale_img,
-            blending=blending,
-            contrast_limits=rescaling,
-            colormap=colormap,
-            name=layer_name,
-            translate=translate,
-        )
-    # TODO: Optionally return some values as well? e.g. if info is needed
-    # by label loading
-
-
-def find_matching_label_layer(
-    ome_zarr_container: ngio.OmeZarrContainer,
-    table_name: str,
-    label_layers: list,
-):
-    """
-    Finds the matching label layer for a feature table
-    """
-    ngio_table = ome_zarr_container.get_table(
-        table_name, check_type="feature_table"
-    )
-    target_label_name = ngio_table._meta.region.path.split("/")[-1]
-
-    if target_label_name not in label_layers:
-        target_label_name = list(label_layers.keys())[0]
-        logger.info(
-            f"The label {target_label_name} that {table_name} would be "
-            "matched to where not loaded. Attaching the features to the"
-            f"first selected label layer ({target_label_name})"
-        )
-
-    return label_layers[target_label_name]
-
-
-def add_feature_table_to_layer(
-    ome_zarr_container: ngio.OmeZarrContainer,
-    feature_table: str,
-    label_layer,
-    roi_name: str,
-):
-    # FIXME: Add case where label layer already contains some columns
-    features_df = ome_zarr_container.get_table(
-        feature_table,
-        check_type="feature_table",
-    ).dataframe
-    # Cast to numpy array in case the data is lazily loaded as dask
-    labels_current_layer = np.unique(np.array(label_layer.data))[1:]
-
-    features_df.index = features_df.index.astype(int)
-    features_df = features_df.loc[features_df.index.isin(labels_current_layer)]
-    features_df = features_df.reset_index()
-    # Drop duplicate columns
-    features_df = features_df.loc[:, ~features_df.columns.duplicated()].copy()
-    # FIXME: Get OME Zarr container store {ome_zarr_container.store}
-    features_df["roi_id"] = f"Test:ROI_{roi_name}"
-
-    # To display correct
-    features_df["index"] = features_df["label"]
-    label_layer.features = features_df
-
-
-def remove_existing_label_layers(viewer):
-    for layer in viewer.layers:
-        # FIXME: Generalize well name catching
-        if type(layer) == napari.layers.Labels and re.match(
-            r"[A-Z][a-z]*\d+_*", layer.name
-        ):
-            viewer.layers.remove(layer)

@@ -2,6 +2,7 @@
 import contextlib
 import logging
 import string
+from enum import Enum, auto
 from typing import Optional
 
 from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
@@ -77,6 +78,12 @@ class NapariHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
         show_info(log_entry)
+
+
+class LoaderState(Enum):
+    INITIALIZING = auto()
+    READY = auto()
+    LOADING = auto()
 
 
 class ZarrSelector(Container):

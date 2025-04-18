@@ -23,9 +23,9 @@ from ngio.utils import (
 
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
-    load_roi,
     remove_existing_label_layers,
 )
+from napari_ome_zarr_navigator.roi_loading_utils import orchestrate_load_roi
 from napari_ome_zarr_navigator.util import (
     ZarrSelector,
     calculate_well_positions,
@@ -321,18 +321,19 @@ class ImgBrowser(Container):
                     zarr_url, fractal_token=self._zarr_selector.token
                 )
             ome_zarr_container = open_ome_zarr_container(store)
-            load_roi(
+            orchestrate_load_roi(
                 ome_zarr_container=ome_zarr_container,
                 viewer=self.viewer,
                 roi_table=self.default_roi_table,
                 roi_name=self.default_roi_name,
                 layer_base_name=layer_base_name,
-                channels=self.default_channels,
                 level=self.default_level,
+                channels=self.default_channels,
                 labels=self.default_labels,
                 features=self.default_features,
                 translation=translation,
-                blending=None,
+                set_state_fn=None,
+                lazy=False,
             )
 
     def go_to_well(self):
