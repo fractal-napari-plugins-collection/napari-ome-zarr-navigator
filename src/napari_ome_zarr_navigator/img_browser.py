@@ -68,6 +68,7 @@ class ImgBrowser(Container):
         self.remove_old_labels = False
         self.zarr_plate = None
         self.plate_store = None
+        self.filter_names = None
         self.df = None  # Dataframe for condition table
         self.filter_container = Container(layout="vertical", visible=False)
 
@@ -88,7 +89,6 @@ class ImgBrowser(Container):
             ],
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
-        self.filter_names = None
         self._zarr_selector.on_change(self.initialize_filters)
         self._zarr_selector.on_change(self.filter_df)
         self.select_well.clicked.connect(self.go_to_well)
@@ -132,6 +132,9 @@ class ImgBrowser(Container):
             self.is_plate = False
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.zarr_plate = None
+            self.well.choices = []
+            self.well._default_choices = []
             return
 
         self.open_zarr_plate()
@@ -177,14 +180,7 @@ class ImgBrowser(Container):
         self.filter_container.visible = False
 
     def set_filtered_wells_for_selection(self):
-        self.df_without_pk = self.df.drop(
-            columns=["row", "col"]
-        )  # .apply(pd.to_numeric, errors="ignore")
-        # Casting to numeric with error ignore is deprecated.
-        # What would the point of it be??
-        self.df = pd.concat(
-            (self.df[["row", "col"]], self.df_without_pk), axis=1
-        )
+        self.df_without_pk = self.df.drop(columns=["row", "col"])
         self.filter_names = self.df_without_pk.columns
         filter_widgets = [
             Container(
@@ -202,11 +198,11 @@ class ImgBrowser(Container):
             for filter_name in self.filter_names
         ]
 
-        self.filter_container.clear()  # Clear previous filters
+        self.filter_container.clear()
         self.filter_container.extend(filter_widgets)
-        self.filter_container.visible = True  # Show the filters container
+        self.filter_container.visible = True
 
-        # Connect signals correctly:
+        # Connect signals
         for i, filter_widget in enumerate(filter_widgets):
             combo_box, check_box = filter_widget[0], filter_widget[1]
 

@@ -141,7 +141,7 @@ class ZarrSelector(Container):
             self._file_picker.hide()
             self._http_url.show()
             self._http_token.show()
-        self._emit_changed()
+        self._emit_source_changed()
 
     def _restart_timer(self, *args):
         self._timer.start()
@@ -171,6 +171,11 @@ class ZarrSelector(Container):
                 cb()
         else:
             pass
+
+    def _emit_source_changed(self):
+        """Emit callback if the source type changed (File <-> HTTP)."""
+        for cb in self._callbacks:
+            cb()
 
     def on_change(self, callback):
         self._callbacks.append(callback)
