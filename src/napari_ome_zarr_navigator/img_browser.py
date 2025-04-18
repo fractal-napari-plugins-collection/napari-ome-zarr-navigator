@@ -298,7 +298,7 @@ class ImgBrowser(Container):
             layer_base_name = f"{well[0]}{well[1]}_"
             # Calculate translations
             translation, _ = calculate_well_positions(
-                plate_store=self._zarr_selector.url,
+                plate_store=self.plate_store,
                 row=well[0],
                 col=well[1],
             )
@@ -340,7 +340,7 @@ class ImgBrowser(Container):
                     top_left_corner,
                     bottom_right_corner,
                 ) = calculate_well_positions(
-                    plate_url=self._zarr_selector.url,
+                    plate_store=self.plate_store,
                     row=well[0],
                     col=well[1],
                     is_plate=self.is_plate,
