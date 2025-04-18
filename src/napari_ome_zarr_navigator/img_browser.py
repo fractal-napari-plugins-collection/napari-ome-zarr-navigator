@@ -69,18 +69,20 @@ class ImgBrowser(Container):
         self.zarr_plate = None
         self.plate_store = None
         self.df = None  # Dataframe for condition table
+        self.filter_container = Container(layout="vertical", visible=False)
 
         super().__init__(
             widgets=[
                 self._zarr_selector,
                 self.well,
+                self._load_condition_tables,
                 self.progress,
+                self.filter_container,
                 Container(
                     widgets=[self.zoom_level, self.select_well],
                     label="Zoom level",
                     layout="horizontal",
                 ),
-                self._load_condition_tables,
                 self.btn_load_roi,
                 self.btn_load_default_roi,
             ],
@@ -135,8 +137,15 @@ class ImgBrowser(Container):
         self.open_zarr_plate()
         if self.zarr_plate:
             self.is_plate = True
+            # Handle filter table setup & loading
             if self._load_condition_tables.value:
                 self.df = self.load_condition_table()
+                self.filter_container.visible = True
+            else:
+                self.df = None
+                self.filter_container.visible = False
+
+            # Display well list
             if self.df is not None:
                 self.set_filtered_wells_for_selection()
             else:
@@ -163,6 +172,9 @@ class ImgBrowser(Container):
         self.df = pd.concat(dfs, ignore_index=True)
         self.filter_names = None
         self.well.value = wells_str[0]
+        # Hide filter container if no filters needed
+        self.filter_container.clear()
+        self.filter_container.visible = False
 
     def set_filtered_wells_for_selection(self):
         self.df_without_pk = self.df.drop(
@@ -174,43 +186,39 @@ class ImgBrowser(Container):
             (self.df[["row", "col"]], self.df_without_pk), axis=1
         )
         self.filter_names = self.df_without_pk.columns
+        filter_widgets = [
+            Container(
+                widgets=[
+                    ComboBox(
+                        choices=self.df_without_pk[filter_name]
+                        .sort_values()
+                        .unique(),
+                        enabled=False,
+                    ),
+                    CheckBox(label=filter_name, value=False),
+                ],
+                layout="horizontal",
+            )
+            for filter_name in self.filter_names
+        ]
 
-        self.filters = Container(
-            widgets=[
-                Container(
-                    widgets=[
-                        ComboBox(
-                            choices=self.df_without_pk[filter_name]
-                            .sort_values()
-                            .unique(),
-                            enabled=False,
-                        ),
-                        CheckBox(label=filter_name, value=False),
-                    ],
-                    layout="horizontal",
-                )
-                for filter_name in self.filter_names
-            ],
-            layout="vertical",
-        )
-        # TODO: Improve adding/removing behavior of dockwidget
-        if self.filter_widget:
-            with suppress(RuntimeError):
-                self.viewer.window.remove_dock_widget(self.filter_widget)
+        self.filter_container.clear()  # Clear previous filters
+        self.filter_container.extend(filter_widgets)
+        self.filter_container.visible = True  # Show the filters container
 
-        self.filter_widget = self.viewer.window.add_dock_widget(
-            widget=self.filters,
-            name="Filters",
-        )
+        # Connect signals correctly:
+        for i, filter_widget in enumerate(filter_widgets):
+            combo_box, check_box = filter_widget[0], filter_widget[1]
 
-        for i in range(len(self.filter_names)):
-            self.filters[i][1].changed.connect(self.toggle_filter(i))
-            self.filters[i][0].changed.connect(self.filter_df)
-            self.filters[i][1].changed.connect(self.filter_df)
+            check_box.changed.connect(self.toggle_filter(i))
+            combo_box.changed.connect(self.filter_df)
+            check_box.changed.connect(self.filter_df)
 
     def toggle_filter(self, i):
         def toggle_on_change():
-            self.filters[i][0].enabled = not self.filters[i][0].enabled
+            filter_row = self.filter_container[i]
+            combo_box, check_box = filter_row[0], filter_row[1]
+            combo_box.enabled = check_box.value
 
         return toggle_on_change
 
@@ -223,9 +231,8 @@ class ImgBrowser(Container):
             self.well.choices = []
             self.well._default_choices = []
             if self.filter_names is not None:
-                self.viewer.window.remove_dock_widget(
-                    widget=self.filter_widget
-                )
+                self.filter_container.clear()
+                self.filter_container.visible = False
 
     def get_zarr_url(self):
         # When the user adds new image layers, check if they have zarr_urls in
@@ -242,16 +249,23 @@ class ImgBrowser(Container):
 
     def filter_df(self):
         if self.filter_names is not None:
-            and_filter = pd.DataFrame(
-                [
-                    (
-                        self.df.iloc[:, i + 2] == self.filters[i][0].value
-                        if self.filters[i][1].value
-                        else self.df.iloc[:, i + 2] == self.df.iloc[:, i + 2]
-                    )
-                    for i in range(len(self.filter_names))
-                ]
-            ).min()
+            filter_conditions = []
+
+            for i, filter_name in enumerate(self.filter_names):
+                combo_box, check_box = (
+                    self.filter_container[i][0],
+                    self.filter_container[i][1],
+                )
+
+                if check_box.value:
+                    condition = self.df[filter_name] == combo_box.value
+                else:
+                    condition = pd.Series(True, index=self.df.index)
+
+                filter_conditions.append(condition)
+
+            # Combine conditions with logical AND
+            and_filter = pd.concat(filter_conditions, axis=1).all(axis=1)
 
             tbl = self.df.loc[and_filter]
             wells = (
@@ -409,44 +423,6 @@ class ImgBrowser(Container):
         self.default_features = features
         self.remove_old_labels = remove_old_labels
         self.btn_load_default_roi.enabled = True
-
-
-# Deprecated searching for plate zarr url for now, assuming the user inputs it.
-# def parse_zarr_url(zarr_url: Union[str, Path]) -> dict:
-#     """Parse the OME-Zarr URL into a dictionary with the root URL, row, column and dataset
-
-#     Args:
-#         zarr_url: Path to the OME-Zarr
-
-#     Returns:
-#         Dictionary with root URL, row, column and dataset
-#     """
-#     zarr_dict = {
-#         "root": None,
-#         "row_alpha": None,
-#         "row": None,
-#         "col": None,
-#         "well": None,
-#         "dataset": None,
-#     }
-#     if zarr_url:
-#         parts = [
-#             p.replace("\\", "") for p in Path(zarr_url).parts
-#         ]  # remove backslash escape character
-#         root_idx = None
-#         for i, p in enumerate(parts):
-#             if p.endswith(".zarr"):
-#                 root_idx = i
-#                 zarr_dict["root"] = Path(*parts[0 : i + 1])
-#             if root_idx and i == root_idx + 1:
-#                 zarr_dict["row_alpha"] = p
-#                 zarr_dict["row"] = alpha_to_numeric(p)
-#             if root_idx and i == root_idx + 2:
-#                 zarr_dict["col"] = int(p)
-#                 zarr_dict["well"] = zarr_dict["row_alpha"] + p
-#             if root_idx and i == root_idx + 3:
-#                 zarr_dict["dataset"] = int(p)
-#     return zarr_dict
 
 
 def get_row_cols(well_list):
