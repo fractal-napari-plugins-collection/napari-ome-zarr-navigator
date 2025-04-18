@@ -94,8 +94,8 @@ class ROILoader(Container):
         widgets = [
             self._roi_table_picker,
             self._roi_picker,
-            self._channel_picker,
             self._level_picker,
+            self._channel_picker,
             self._label_picker,
             self._feature_picker,
             self._remove_old_labels_box,
