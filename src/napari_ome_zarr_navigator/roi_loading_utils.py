@@ -99,6 +99,7 @@ def fetch_labels_and_features(
     features: list[str],
     translation: tuple[int, int],
     lazy: bool = False,
+    zarr_id: str = "",
 ):
     """
     Load all label masks + feature tables for one ROI.
@@ -156,16 +157,14 @@ def fetch_labels_and_features(
         df = feat_tbl.dataframe.copy()
         df.index = df.index.astype(int)
         lbl_idx = find_matching_label_layer_index(
-            ome_zarr_container, feature_table=feat_tbl, labels=labels
+            feature_table=feat_tbl, labels=labels
         )
         labels_arr = result["labels"][lbl_idx]["data"]
         lbl_ids = np.unique(labels_arr)[1:]
         df = df.loc[df.index.isin(lbl_ids)].reset_index()
         df = df.loc[:, ~df.columns.duplicated()].copy()
         df["index"] = df["label"]
-        # FIXME: Get OME Zarr container store {ome_zarr_container.store}
-        # This matters to not mess up the classifier!!
-        df["roi_id"] = f"Zarr_URL:ROI_{roi_name}"
+        df["roi_id"] = f"{zarr_id}:{roi_name}"
 
         result["features"].append(
             {"layer_name": result["labels"][lbl_idx]["name"], "df": df}
@@ -175,7 +174,6 @@ def fetch_labels_and_features(
 
 
 def find_matching_label_layer_index(
-    ome_zarr_container: ngio.OmeZarrContainer,
     feature_table: ngio.tables.FeatureTable,
     labels: list[str],
 ):
@@ -209,6 +207,7 @@ def orchestrate_load_roi(
     blending_int: Optional[str] = None,
     set_state_fn: Optional[callable] = None,
     lazy: bool = False,
+    zarr_id: str = "",
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -235,6 +234,9 @@ def orchestrate_load_roi(
             provided.
         lazy: Whether to use dask for lazy loading. True will load the data
             lazily, False will load the data immediately.
+        zarr_id: A unique identifier for the OME-Zarr image that features get
+            loaded from. The zarr_id is used as a column for the features that
+            allows a user to map back the features to a given OME-Zarr.
 
     """
     # 1) disable & show "Loading"
@@ -289,6 +291,7 @@ def orchestrate_load_roi(
             level,
             ch,
             translation,
+            lazy=lazy,
         )
         w.returned.connect(
             lambda img_kw: (results["images"].append(img_kw), try_finalize())
@@ -305,6 +308,8 @@ def orchestrate_load_roi(
         labels,
         features,
         translation,
+        lazy=lazy,
+        zarr_id=zarr_id,
     )
     w2.returned.connect(
         lambda lf: (results.__setitem__("lbl_feats", lf), try_finalize())

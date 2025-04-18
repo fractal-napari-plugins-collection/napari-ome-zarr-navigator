@@ -45,6 +45,8 @@ class ROILoader(Container):
         self.channel_dict = {}
         self.channel_names_dict = {}
         self.labels_dict = {}
+        # Used to identify the zarr image in the feature table
+        self.zarr_id = ""
 
         # Translation to move position of ROIs loaded
         self.translation = (0, 0)
@@ -373,6 +375,7 @@ class ROILoader(Container):
             features=features,
             translation=translation,
             set_state_fn=self._on_state_change,
+            zarr_id=self.zarr_id,
         )
 
 
@@ -403,6 +406,7 @@ class ROILoaderImage(ROILoader):
         source = self.zarr_selector.source
         self.zarr_url = self.zarr_selector.url
         token = self.zarr_selector.token
+        self.zarr_id = self.zarr_url
 
         if self.zarr_url in ("", ".", None):
             self._ome_zarr_container = None
@@ -429,6 +433,7 @@ class ROILoaderPlate(ROILoader):
         col: str,
         image_browser,
         is_plate: bool,
+        plate_id: str = "",
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
@@ -438,6 +443,7 @@ class ROILoaderPlate(ROILoader):
         self.row = row
         self.col = col
         self.image_browser = image_browser
+        self.plate_id = plate_id
         super().__init__(
             viewer=viewer,
             extra_widgets=[
@@ -466,6 +472,9 @@ class ROILoaderPlate(ROILoader):
         return well.paths()
 
     def update_image_selection(self):
+        self.zarr_id = (
+            f"{self.plate_id}/{self.row}/{self.col}/{self._zarr_picker.value}"
+        )
         image_store = self.plate.get_image_store(
             row=self.row, column=self.col, image_path=self._zarr_picker.value
         )

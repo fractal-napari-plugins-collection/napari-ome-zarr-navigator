@@ -290,6 +290,7 @@ class ImgBrowser(Container):
                 wells[0][1],
                 self,
                 self.is_plate,
+                plate_id=self._zarr_selector.url,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,
