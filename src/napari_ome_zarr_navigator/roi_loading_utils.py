@@ -316,6 +316,7 @@ class ROILoaderSignals(QObject):
     image_changed = Signal(object)
     roi_choices_updated = Signal(list)
     roi_tables_updated = Signal(list)
+    load_finished = Signal()
 
     def __init__(self):
         super().__init__()

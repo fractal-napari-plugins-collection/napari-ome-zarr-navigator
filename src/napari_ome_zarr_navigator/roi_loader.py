@@ -262,6 +262,11 @@ class ROILoader(Container):
         self._roi_table_picker._default_choices = table_list
         self.image_changed_event.roi_tables_updated.emit(table_list)
 
+    def _on_state_change(self, new_state: LoaderState):
+        self.state = new_state
+        if new_state is LoaderState.READY:
+            self.image_changed_event.load_finished.emit()
+
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
             channels = self.ome_zarr_container.image_meta.channel_labels
@@ -367,7 +372,7 @@ class ROILoader(Container):
             labels=labels,
             features=features,
             translation=translation,
-            set_state_fn=lambda state: setattr(self, "state", state),
+            set_state_fn=self._on_state_change,
         )
 
 
