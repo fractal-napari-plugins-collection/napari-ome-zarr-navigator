@@ -49,6 +49,11 @@ class ROILoader(Container):
         # Used to identify the zarr image in the feature table
         self.zarr_id = ""
 
+        # Loading button variables
+        self._dots = 0
+        self._loading_timer = QTimer(interval=300)
+        self._loading_timer.timeout.connect(self._animate_loading)
+
         # Translation to move position of ROIs loaded
         self.translation = (0, 0)
         self.layer_base_name = ""
@@ -266,9 +271,19 @@ class ROILoader(Container):
         self.image_changed_event.roi_tables_updated.emit(table_list)
 
     def _on_state_change(self, new_state: LoaderState):
-        self.state = new_state
+        self._loading_timer.stop()
+        if new_state is LoaderState.LOADING:
+            self._dots = 0
+            self.state = LoaderState.LOADING
+            self._loading_timer.start()
+        else:
+            self.state = new_state
         if new_state is LoaderState.READY:
             self.image_changed_event.load_finished.emit()
+
+    def _animate_loading(self):
+        self._dots = (self._dots + 1) % 4
+        self._run_button.text = "Loading" + "." * self._dots
 
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
