@@ -141,6 +141,7 @@ class ImgBrowser(Container):
             self.is_plate = False
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.btn_load_default_roi.enabled = False
             self.zarr_plate = None
             self.well.choices = []
             self.well._default_choices = []
@@ -178,15 +179,28 @@ class ImgBrowser(Container):
             wells.append(f"{row}{col}")
             dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
         # TODO: Use fancier sorting that handles non-zero padded column names
-        wells_str = sorted(wells)
+        wells_str = sorted(wells, key=self.split_well_name_for_sorting)
         self.well.choices = wells_str
         self.well._default_choices = wells_str
         self.df = pd.concat(dfs, ignore_index=True)
         self.filter_names = None
-        self.well.value = wells_str[0]
         # Hide filter container if no filters needed
         self.filter_container.clear()
         self.filter_container.visible = False
+
+    @staticmethod
+    def split_well_name_for_sorting(well: str) -> tuple[str, int]:
+        """
+        Given a well name like "B03" or "Ba011", returns ("B", 3) or ("Ba", 11).
+        If it doesn't match, falls back to (whole_string, 0).
+        """
+        _well_re = re.compile(r"^([A-Za-z]+)(\d+)$")
+        m = _well_re.match(well)
+        if m:
+            letters, digits = m.groups()
+            return letters, int(digits)
+        else:
+            return well, 0
 
     def set_filtered_wells_for_selection(self):
         self.df_without_pk = self.df.drop(columns=["row", "col"])
@@ -245,7 +259,7 @@ class ImgBrowser(Container):
         active = self.viewer.layers.selection.active
         if active and active.as_layer_data_tuple()[-1] == "image":
             path = self.viewer.layers.selection.active.source.path
-            if path:
+            if path and path != self._zarr_selector.url:
                 self._zarr_selector.set_url(path)
             if "sample_path" in self.viewer.layers.selection.active.metadata:
                 self._zarr_selector.set_url(
