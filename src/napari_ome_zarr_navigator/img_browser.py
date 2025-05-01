@@ -20,6 +20,7 @@ from ngio.utils import (
     NgioValidationError,
     fractal_fsspec_store,
 )
+from qtpy.QtCore import QTimer
 
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
@@ -27,6 +28,7 @@ from napari_ome_zarr_navigator.roi_loader import (
 )
 from napari_ome_zarr_navigator.roi_loading_utils import orchestrate_load_roi
 from napari_ome_zarr_navigator.util import (
+    LoaderState,
     ZarrSelector,
     calculate_well_positions,
 )
@@ -71,6 +73,13 @@ class ImgBrowser(Container):
         self.filter_names = None
         self.df = None  # Dataframe for condition table
         self.filter_container = Container(layout="vertical", visible=False)
+
+        # Load button state handling
+        self._default_dots = 0
+        self._default_loading_timer = QTimer(interval=300, singleShot=False)
+        self._default_loading_timer.timeout.connect(
+            self._animate_default_loading
+        )
 
         super().__init__(
             widgets=[
@@ -333,8 +342,34 @@ class ImgBrowser(Container):
                 labels=self.default_labels,
                 features=self.default_features,
                 translation=translation,
-                set_state_fn=None,
+                set_state_fn=self._on_default_state_change,
                 lazy=False,
+            )
+
+    def _animate_default_loading(self):
+        """Advance the dots on the default-ROI button every tick."""
+        self._default_dots = (self._default_dots + 1) % 4
+        self.btn_load_default_roi.text = "Loading" + "." * self._default_dots
+
+    def _on_default_state_change(self, new_state: LoaderState):
+        """
+        State-handler for btn_load_default_roi:
+        • on LOADING:  disable, reset, start timer
+        • on READY:    stop timer, reset text & enable
+        """
+        # always kill any running animation
+        self._default_loading_timer.stop()
+
+        if new_state is LoaderState.LOADING:
+            self._default_dots = 0
+            self.btn_load_default_roi.enabled = False
+            self.btn_load_default_roi.text = "Loading"
+            self._default_loading_timer.start()
+
+        elif new_state is LoaderState.READY:
+            self.btn_load_default_roi.enabled = True
+            self.btn_load_default_roi.text = (
+                "Load selected ROI for additional well(s)"
             )
 
     def go_to_well(self):
