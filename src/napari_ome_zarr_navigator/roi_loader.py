@@ -12,6 +12,7 @@ from magicgui.widgets import (
 from napari.qt.threading import thread_worker
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.utils import (
+    NgioFileNotFoundError,
     NgioValidationError,
     StoreOrGroup,
     fractal_fsspec_store,
@@ -325,14 +326,18 @@ class ROILoader(Container):
     @thread_worker
     def _load_container(self, store):
         """Threaded open_ome_zarr_container."""
-        return open_ome_zarr_container(store, mode="r", cache=True)
+        try:
+            return open_ome_zarr_container(store, mode="r", cache=True)
+        except NgioFileNotFoundError as exc:
+            self._on_image_container_error(exc)
+            return None
 
     def _on_image_container_ready(self, container):
         # on main thread, assign and kick off your init sequence
         self.ome_zarr_container = container
 
     def _on_image_container_error(self, exc: Exception):
-        logger.error(f"Error while loading image: {exc}")
+        logger.warning(f"Error while loading image: {exc}")
         self.ome_zarr_container = None
         self.reset_widgets()
 
@@ -420,7 +425,6 @@ class ROILoaderImage(ROILoader):
 
         worker = self._load_container(store)
         worker.returned.connect(self._on_image_container_ready)
-        worker.errored.connect(self._on_image_container_error)
         worker.start()
 
 
@@ -480,7 +484,6 @@ class ROILoaderPlate(ROILoader):
         )
         worker = self._load_container(image_store)
         worker.returned.connect(self._on_image_container_ready)
-        worker.errored.connect(self._on_image_container_error)
         worker.start()
 
     def _update_defaults(self):
