@@ -9,6 +9,7 @@ from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from qtpy.QtCore import QTimer
+from qtpy.QtWidgets import QLineEdit
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -107,6 +108,8 @@ class ZarrSelector(Container):
         # HTTP inputs
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
+        # mask it like a password
+        self._http_token.native.setEchoMode(QLineEdit.Password)
         with contextlib.suppress(TypeError):
             self._http_token.native.setEchoMode(2)  # hide token display
 
