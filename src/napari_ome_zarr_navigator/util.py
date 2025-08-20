@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-import contextlib
 import logging
 import string
 from enum import Enum, auto
 from typing import Optional
 
-from magicgui.widgets import Container, FileEdit, Label, LineEdit, RadioButtons
+from magicgui.widgets import (
+    Container,
+    FileEdit,
+    Label,
+    LineEdit,
+    PushButton,
+    RadioButtons,
+)
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from qtpy.QtCore import QTimer
@@ -110,16 +116,32 @@ class ZarrSelector(Container):
         self._http_token = LineEdit(label="Token")
         # mask it like a password
         self._http_token.native.setEchoMode(QLineEdit.Password)
-        with contextlib.suppress(TypeError):
-            self._http_token.native.setEchoMode(2)  # hide token display
+        self.toggle = PushButton(text="Show")
+
+        def _toggle():
+            le = self._http_token.native
+            if le.echoMode() == QLineEdit.Password:
+                le.setEchoMode(QLineEdit.Normal)
+                self.toggle.text = "Hide"
+            else:
+                le.setEchoMode(QLineEdit.Password)
+                self.toggle.text = "Show"
+
+        self.toggle.native.clicked.connect(_toggle)
 
         # Stacked input fields
         self._stack = Container(
-            widgets=[self._file_picker, self._http_url, self._http_token]
+            widgets=[
+                self._file_picker,
+                self._http_url,
+                self._http_token,
+                self.toggle,
+            ]
         )
         # Initially hide the HTTP fields
         self._http_url.hide()
         self._http_token.hide()
+        self.toggle.hide()
 
         # Assemble the container
         self._main = Container(
@@ -147,10 +169,12 @@ class ZarrSelector(Container):
             self._file_picker.show()
             self._http_url.hide()
             self._http_token.hide()
+            self.toggle.hide()
         else:
             self._file_picker.hide()
             self._http_url.show()
             self._http_token.show()
+            self.toggle.show()
         self._emit_source_changed()
 
     def _restart_timer(self, *args):
