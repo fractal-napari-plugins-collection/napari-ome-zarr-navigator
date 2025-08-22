@@ -2,6 +2,7 @@
 import logging
 import string
 from enum import Enum, auto
+from importlib.resources import files
 from typing import Optional
 
 from magicgui.widgets import (
@@ -13,8 +14,9 @@ from magicgui.widgets import (
 )
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from qtpy.QtCore import QEvent, QPoint, Qt, QTimer
-from qtpy.QtWidgets import QLineEdit, QToolButton
+from qtpy.QtCore import QTimer
+from qtpy.QtGui import QIcon
+from qtpy.QtWidgets import QLineEdit
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -94,7 +96,7 @@ class LoaderState(Enum):
 
 class ZarrSelector(Container):
     def __init__(self, label="Input Source", file_mode="d", debounce_ms=500):
-        # Source type selector
+        # Source selector
         self._source_selector = RadioButtons(
             label="Source",
             choices=["File", "HTTP"],
@@ -102,78 +104,48 @@ class ZarrSelector(Container):
             value="File",
         )
 
-        # Internal state to prevent redundant emits
+        # internal state
         self._last_file_url = None
         self._last_http_url = None
         self._last_token = None
 
-        # File path selector
+        # Inputs
         self._file_picker = FileEdit(label="Zarr file", mode=file_mode)
-
-        # HTTP inputs
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
+
+        # Mask token + add eye action (always white icons)
         le: QLineEdit = self._http_token.native
         le.setEchoMode(QLineEdit.Password)
-        # mask it like a password
-        self._http_token.native.setEchoMode(QLineEdit.Password)
 
-        eye_btn = QToolButton(le)  # parent it to the line edit
-        eye_btn.setCheckable(True)
-        eye_btn.setCursor(Qt.PointingHandCursor)
-        eye_btn.setStyleSheet("QToolButton { border: none; padding: 0px; }")
-        # Use simple emoji for the icon to avoid extra deps; swap on toggle
-        eye_btn.setText("👁")  # shown when hidden
-        eye_btn.setFixedSize(18, 18)  # small, fits inside the frame
+        pkg = files("napari_ome_zarr_navigator")
+        eye_icon = QIcon(str(pkg / "icons" / "eye.svg"))
+        eye_off_icon = QIcon(str(pkg / "icons" / "eye-off.svg"))
 
-        def _reposition():
-            # reserve space on the right so text doesn't overlap the button
-            right_margin = eye_btn.width() + 6
-            le.setTextMargins(0, 0, right_margin, 0)
-            # move the button to the trailing edge, vertically centered
-            x = le.rect().right() - eye_btn.width() - 3
-            y = (le.rect().height() - eye_btn.height()) // 2
-            eye_btn.move(QPoint(x, y))
-
-        def _toggle(show: bool):
-            if show:
-                le.setEchoMode(QLineEdit.Normal)
-                eye_btn.setText("🙈")  # indicate "visible now; click to hide"
-            else:
-                le.setEchoMode(QLineEdit.Password)
-                eye_btn.setText("👁")  # indicate "hidden; click to show"
-
-        eye_btn.toggled.connect(_toggle)
-
-        # keep the button correctly placed on resize
-        def _event_filter(obj, ev):
-            if obj is le and ev.type() == QEvent.Resize:
-                _reposition()
-            return False
-
-        le.installEventFilter(le)  # use the widget itself as filter host
-        le.eventFilter = _event_filter  # attach handler
-        _reposition()  # initial placement
-
-        # Stacked input fields
-        self._stack = Container(
-            widgets=[
-                self._file_picker,
-                self._http_url,
-                self._http_token,
-            ]
+        self._eye_action = le.addAction(
+            eye_off_icon, QLineEdit.TrailingPosition
         )
-        # Initially hide the HTTP fields
+        self._eye_action.setCheckable(True)
+
+        def _toggle(checked: bool) -> None:
+            le.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+            self._eye_action.setIcon(eye_icon if checked else eye_off_icon)
+
+        self._eye_action.toggled.connect(_toggle)
+
+        # Stack & layout
+        self._stack = Container(
+            widgets=[self._file_picker, self._http_url, self._http_token]
+        )
         self._http_url.hide()
         self._http_token.hide()
 
-        # Assemble the container
         self._main = Container(
             widgets=[Label(value=label), self._source_selector, self._stack]
         )
         super().__init__(widgets=[self._main])
 
-        # Debounce timer: Avoids reloading while someone modifies the URL
+        # Debounce
         self._timer = QTimer()
         self._timer.setInterval(debounce_ms)
         self._timer.setSingleShot(True)
@@ -185,7 +157,6 @@ class ZarrSelector(Container):
         self._http_url.changed.connect(self._restart_timer)
         self._http_token.changed.connect(self._restart_timer)
 
-        # Custom signal-style callback
         self._callbacks = []
 
     def _on_source_changed(self, value):
