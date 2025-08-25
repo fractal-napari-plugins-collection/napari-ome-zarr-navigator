@@ -1,5 +1,6 @@
 include LICENSE
 include README.md
+recursive-include src/napari_ome_zarr_navigator/icons *.svg
 
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
