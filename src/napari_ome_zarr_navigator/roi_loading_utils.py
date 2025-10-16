@@ -10,6 +10,7 @@ import ngio.tables
 import numpy as np
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
+from ngio.tables._tables_container import TypedRoiTable
 from qtpy.QtCore import QObject, Signal
 
 from napari_ome_zarr_navigator.util import (
@@ -34,7 +35,7 @@ def fetch_single_image(
     """Load exactly one channel's ROI and return kwargs for viewer.add_image."""
     # TODO: Refactor ROI table loading to happen before the parallelized fetch
     ngio_table = ome_zarr_container.get_table(
-        roi_table, check_type="generic_roi_table"
+        roi_table, check_type=TypedRoiTable
     )
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (
@@ -42,13 +43,18 @@ def fetch_single_image(
         translation[1] + curr_roi.x,
     )
 
-    idx = ome_zarr_container.image_meta.get_channel_idx(channel)
     ngio_img = ome_zarr_container.get_image(path=level)
 
     if lazy:
-        arr = ngio_img.get_roi(roi=curr_roi, c=idx, mode="dask").squeeze()
+        arr = ngio_img.get_roi(
+            roi=curr_roi, channel_selection=channel, mode="dask"
+        ).squeeze()
     else:
-        arr = np.squeeze(ngio_img.get_roi(roi=curr_roi, c=idx, mode="numpy"))
+        arr = np.squeeze(
+            ngio_img.get_roi(
+                roi=curr_roi, channel_selection=channel, mode="numpy"
+            )
+        )
 
     if not np.any(arr):
         # nothing to display
@@ -68,7 +74,10 @@ def fetch_single_image(
         )
 
     # build colormap + contrast_limits
-    vis = ome_zarr_container.image_meta.channels[idx].channel_visualisation
+    idx = ome_zarr_container.get_channel_idx(channel_label=channel)
+    vis = ome_zarr_container.image_meta.channels_meta.channels[
+        idx
+    ].channel_visualisation
     try:
         cmap = Colormap(["#000000", f"#{vis.color}"], name=vis.color)
     except AttributeError:
@@ -107,7 +116,7 @@ def fetch_labels_and_features(
     and "features" (a list of {layer_name, df} to attach).
     """
     ngio_table = ome_zarr_container.get_table(
-        roi_table, check_type="generic_roi_table"
+        roi_table, check_type=TypedRoiTable
     )
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (

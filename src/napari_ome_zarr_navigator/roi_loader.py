@@ -287,7 +287,7 @@ class ROILoader(Container):
 
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
-            channels = self.ome_zarr_container.image_meta.channel_labels
+            channels = self.ome_zarr_container.channel_labels
             levels = self.ome_zarr_container.levels_paths
             try:
                 labels = self.ome_zarr_container.list_labels()
