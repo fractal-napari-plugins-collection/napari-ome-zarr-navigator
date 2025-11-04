@@ -177,10 +177,7 @@ class ROILoader(Container):
         # (1) Start ROI‐tables lookup:
         @thread_worker
         def _get_tables():
-            if self.ome_zarr_container is not None:
-                return self.ome_zarr_container.list_roi_tables()
-            else:
-                return [""]
+            return self.get_roi_tables()
 
         tbl_worker = _get_tables()
         tbl_worker.returned.connect(self._on_tables_ready)
@@ -189,6 +186,28 @@ class ROILoader(Container):
         # (3) Kick off image‐attrs right away (synchronous), then mark done:
         self.update_available_image_attrs(self.ome_zarr_container)
         self._on_init_step_done()
+
+    def get_roi_tables(self) -> list[str]:
+        """
+        List available ROI tables
+
+        Returns the list of available ROI tables in the current OME-Zarr
+        container. Regular ROI tables are listed first, followed by masking
+        ROI tables. If the container is None, returns a list with an
+        empty string.
+        """
+        if self.ome_zarr_container is not None:
+            # Use custom listing of ROI tables to ensure masking ROI tables
+            # come last in the list (to avoid )
+            roi = self.ome_zarr_container.list_tables(
+                filter_types="roi_table",
+            )
+            masking_roi = self.ome_zarr_container.list_tables(
+                filter_types="masking_roi_table",
+            )
+            return roi + masking_roi
+        else:
+            return [""]
 
     def _on_tables_ready(self, table_list):
         # apply ROI‐tables dropdown
