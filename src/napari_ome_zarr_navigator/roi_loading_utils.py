@@ -61,12 +61,15 @@ def fetch_single_image(
         return None
 
     # compute scale
+    #TODO: cleaner handling of tyx edge-case
     if arr.ndim == 3:
         z, y, x = ngio_img.pixel_size.zyx
         scale = (z, y, x)
     elif arr.ndim == 2:
         y, x = ngio_img.pixel_size.yx
         scale = (y, x)
+    elif arr.ndim == 4:
+        scale = ngio_img.pixel_size.tzyx
     else:
         raise NotImplementedError(
             "ROI loading has not been implemented for ROIs of shape "
@@ -127,6 +130,7 @@ def fetch_labels_and_features(
     result = {"labels": [], "features": []}
 
     # 1) load labels
+    # TODO: edge-case tyx, see above
     img_meta = ome_zarr_container.get_image(path=level).pixel_size
     for lbl in labels:
         ngio_lbl = ome_zarr_container.get_label(
@@ -143,6 +147,8 @@ def fetch_labels_and_features(
         elif arr.ndim == 2:
             y, x = ngio_lbl.pixel_size.yx
             scale = (y, x)
+        elif arr.ndim == 4:
+            scale = ngio_lbl.pixel_size.tzyx
         else:
             raise NotImplementedError(
                 "ROI loading has not been implemented for ROIs of shape "
