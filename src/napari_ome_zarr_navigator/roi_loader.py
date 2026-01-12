@@ -307,7 +307,7 @@ class ROILoader(Container):
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
             channels = self.ome_zarr_container.channel_labels
-            levels = self.ome_zarr_container.levels_paths
+            levels = sorted(self.ome_zarr_container.levels_paths)
             try:
                 labels = self.ome_zarr_container.list_labels()
             except NgioValidationError:
@@ -490,7 +490,7 @@ class ROILoaderPlate(ROILoader):
         )
         self.layer_base_name = f"{row}{col}_{self.layer_base_name}"
         self._zarr_picker.changed.connect(self.update_image_selection)
-        zarr_images = self.get_available_ome_zarr_images()
+        zarr_images = sorted(self.get_available_ome_zarr_images())
         self._zarr_picker.choices = zarr_images
         self._zarr_picker._default_choices = zarr_images
 
