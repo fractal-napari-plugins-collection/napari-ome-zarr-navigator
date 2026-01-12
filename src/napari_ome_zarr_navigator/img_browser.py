@@ -358,6 +358,7 @@ class ImgBrowser(Container):
                 translation=translation,
                 set_state_fn=self._on_default_state_change,
                 lazy=False,
+                zarr_id=zarr_url,
             )
 
     def _animate_default_loading(self):
