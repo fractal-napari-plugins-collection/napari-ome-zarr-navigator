@@ -1,27 +1,31 @@
+ci:
+  autoupdate_schedule: monthly
+  autofix_commit_msg: "style(pre-commit.ci): auto fixes [...]"
+  autoupdate_commit_msg: "ci(pre-commit.ci): autoupdate"
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: check-docstring-first
       - id: end-of-file-fixer
       - id: trailing-whitespace
         exclude: ^\.napari-hub/.*
-      - id: check-yaml # checks for correct yaml syntax for github actions ex.
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.1.9
+      - id: check-yaml
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.24.1
+    hooks:
+      - id: validate-pyproject
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
     hooks:
       - id: ruff
-  - repo: https://github.com/psf/black
-    rev: 23.12.0
-    hooks:
-      - id: black
+        args: [--fix]
+      - id: ruff-format
+
   - repo: https://github.com/tlambert03/napari-plugin-checks
     rev: v0.3.0
     hooks:
       - id: napari-plugin-checks
-  # https://mypy.readthedocs.io/en/stable/introduction.html
-  # you may wish to add this as well!
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v0.910-1
-  #   hooks:
-  #     - id: mypy

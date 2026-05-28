@@ -2,8 +2,6 @@ import napari
 
 from napari_ome_zarr_navigator.img_browser import ImgBrowser
 
-from napari_ome_zarr_navigator import _TEST_DATA_DIR
-
 
 def main():
     viewer = napari.Viewer()

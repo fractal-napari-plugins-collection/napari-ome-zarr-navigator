@@ -69,6 +69,7 @@ packages = ["src/napari_ome_zarr_navigator"]
 line-length = 88
 target-version = "py311"
 fix = true
+exclude = ["src/**/generate_test_data/"]
 
 [tool.ruff.lint]
 select = [

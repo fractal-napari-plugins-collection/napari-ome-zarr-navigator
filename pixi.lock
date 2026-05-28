@@ -8464,8 +8464,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./
   name: napari-ome-zarr-navigator
-  version: 0.2.7.dev6+ga93f68289.d20260528
-  sha256: 5afd1afebc93cfd940a4cc8e8bec660bae7dd917a6bb4a21798dc1caff5d95cc
+  version: 0.2.7.dev12+g6441e26f4.d20260528
+  sha256: 46a3e78df6851fdbdc2ad66860e1deaddeb1fe57dcca969ffc1ce721ce87386a
   requires_dist:
   - magicgui
   - napari-ome-zarr<0.8

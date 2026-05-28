@@ -1,7 +1,6 @@
 # Utils for threaded loading of ROIs & adding them to the viewer.
 import logging
-import re
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import napari
 import napari.layers
@@ -10,11 +9,12 @@ import ngio.tables
 import numpy as np
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
-from qtpy.QtCore import QObject, Signal
+from qtpy.QtCore import QObject, Signal  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import (
     LoaderState,
 )
+from napari_ome_zarr_navigator.well_utils import WELL_LAYER_PATTERN
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -36,8 +36,8 @@ def fetch_single_image(
     ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (
-        translation[0] + curr_roi["y"].start,
-        translation[1] + curr_roi["x"].start,
+        translation[0] + curr_roi["y"].start,  # type: ignore[index]
+        translation[1] + curr_roi["x"].start,  # type: ignore[index]
     )
 
     ngio_img = ome_zarr_container.get_image(path=level)
@@ -45,11 +45,11 @@ def fetch_single_image(
     if lazy:
         arr = ngio_img.get_roi_as_dask(
             roi=curr_roi, channel_selection=channel
-        ).squeeze()
+        ).squeeze()  # type: ignore[attr-defined]
     else:
         arr = ngio_img.get_roi_as_numpy(
             roi=curr_roi, channel_selection=channel
-        ).squeeze()
+        ).squeeze()  # type: ignore[attr-defined]
 
     if not np.any(arr):
         # nothing to display
@@ -73,7 +73,7 @@ def fetch_single_image(
 
     # build colormap + contrast_limits
     idx = ome_zarr_container.get_channel_idx(channel_label=channel)
-    vis = ome_zarr_container.meta.channels_meta.channels[
+    vis = ome_zarr_container.meta.channels_meta.channels[  # type: ignore[attr-defined]
         idx
     ].channel_visualisation
     try:
@@ -116,8 +116,8 @@ def fetch_labels_and_features(
     ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (
-        translation[0] + curr_roi["y"].start,
-        translation[1] + curr_roi["x"].start,
+        translation[0] + curr_roi["y"].start,  # type: ignore[index]
+        translation[1] + curr_roi["x"].start,  # type: ignore[index]
     )
 
     result = {"labels": [], "features": []}
@@ -130,9 +130,9 @@ def fetch_labels_and_features(
             name=lbl, pixel_size=img_meta, strict=False
         )
         if lazy:
-            arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()
+            arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
         else:
-            arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()
+            arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
 
         if arr.ndim == 3:
             z, y, x = ngio_lbl.pixel_size.zyx
@@ -162,9 +162,7 @@ def fetch_labels_and_features(
         feat_tbl = ome_zarr_container.get_feature_table(tbl)
         df = feat_tbl.dataframe.copy()
         df.index = df.index.astype(int)
-        lbl_idx = find_matching_label_layer_index(
-            feature_table=feat_tbl, labels=labels
-        )
+        lbl_idx = find_matching_label_layer_index(feature_table=feat_tbl, labels=labels)
         labels_arr = result["labels"][lbl_idx]["data"]
         lbl_ids = np.unique(labels_arr)[1:]
         df = df.loc[df.index.isin(lbl_ids)].reset_index()
@@ -210,8 +208,8 @@ def orchestrate_load_roi(
     labels: list[str],
     features: list[str],
     translation: tuple[int, int],
-    blending_int: Optional[str] = None,
-    set_state_fn: Optional[Callable] = None,
+    blending_int: str | None = None,
+    set_state_fn: Callable | None = None,
     lazy: bool = False,
     zarr_id: str = "",
 ):
@@ -258,10 +256,7 @@ def orchestrate_load_roi(
 
     def try_finalize():
         # wait until images for all channels + lbl_feats present
-        if (
-            len(results["images"]) != len(channels)
-            or results["lbl_feats"] is None
-        ):
+        if len(results["images"]) != len(channels) or results["lbl_feats"] is None:
             return
 
         # add intensity images in user‐selected order
@@ -269,9 +264,7 @@ def orchestrate_load_roi(
             blending = blending_int if i == 0 else "additive"
             name = f"{base_name}{ch}"
             kw = next(
-                item
-                for item in results["images"]
-                if item and item["name"] == name
+                item for item in results["images"] if item and item["name"] == name
             )
             viewer.add_image(**kw, blending=blending)
 
@@ -289,9 +282,9 @@ def orchestrate_load_roi(
 
     # 2) launch one worker per channel
     for ch in channels:
-        w = fetch_single_image(
+        w = fetch_single_image(  # type: ignore[call-arg]
             ome_zarr_container,
-            roi_table,
+            roi_table,  # type: ignore
             roi_name,
             base_name,
             level,
@@ -305,9 +298,9 @@ def orchestrate_load_roi(
         w.start()
 
     # 3) launch labels+features worker
-    w2 = fetch_labels_and_features(
+    w2 = fetch_labels_and_features(  # type: ignore[call-arg]
         ome_zarr_container,
-        roi_table,
+        roi_table,  # type: ignore
         roi_name,
         base_name,
         level,
@@ -335,8 +328,7 @@ class ROILoaderSignals(QObject):
 
 def remove_existing_label_layers(viewer):
     for layer in viewer.layers:
-        # FIXME: Generalize well name catching
-        if type(layer) == napari.layers.Labels and re.match(
-            r"[A-Z][a-z]*\d+_*", layer.name
+        if isinstance(layer, napari.layers.Labels) and WELL_LAYER_PATTERN.match(
+            layer.name
         ):
             viewer.layers.remove(layer)

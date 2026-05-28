@@ -4,7 +4,8 @@ import hashlib
 import logging
 import re
 import shutil
-import urllib
+import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Union
 
@@ -25,7 +26,7 @@ def load_ome_zarr_from_zenodo(doi: str, zarr_url: Union[str, Path]):
     if not doi_path.is_dir():
         download_from_zenodo(doi, directory=doi_path)
         shutil.unpack_archive(zarr_path.with_suffix(".zarr.zip"), doi_path)
-    reader = Reader(parse_url(zarr_path))
+    reader = Reader(parse_url(zarr_path))  # type: ignore[arg-type]
     zarr_group = list(reader())[0]
     return zarr_group
 
@@ -34,9 +35,11 @@ def download_from_zenodo(
     doi: str,
     overwrite: bool = False,
     directory: Union[str, Path] = Path(),
-    access_token: str = None,
+    access_token: str | None = None,
 ):
-    record_id = re.match(r".*zenodo.(\w+)", doi).group(1)
+    m = re.match(r".*zenodo.(\w+)", doi)
+    assert m is not None, f"Could not parse Zenodo DOI: {doi}"
+    record_id = m.group(1)
     url = "https://zenodo.org/api/records/" + record_id
     js = requests.get(url).json()
     doi = js["metadata"]["doi"]
@@ -44,9 +47,7 @@ def download_from_zenodo(
     print("Publication date: " + js["metadata"]["publication_date"])
     print("DOI: " + js["metadata"]["doi"])
     print(
-        "Total file size: {:.1f} MB".format(
-            sum(f["size"] / 10**6 for f in js["files"])
-        )
+        "Total file size: {:.1f} MB".format(sum(f["size"] / 10**6 for f in js["files"]))
     )
     doi_path = Path(directory)
     try:
@@ -59,18 +60,14 @@ def download_from_zenodo(
         algorithm, checksum = file["checksum"].split(":")
         try:
             link = urllib.parse.unquote(file["links"]["self"])
-            wget.download(
-                f"{link}?access_token={access_token}", str(directory)
-            )
+            wget.download(f"{link}?access_token={access_token}", str(directory))
             check_passed, returned_checksum = verify_checksum(
                 file_path, algorithm, checksum
             )
             if check_passed:
                 print(f"\nChecksum is correct. ({checksum})")
             else:
-                print(
-                    f"\nChecksum is incorrect! ({checksum} got: {returned_checksum})"
-                )
+                print(f"\nChecksum is incorrect! ({checksum} got: {returned_checksum})")
         except urllib.error.HTTPError:
             pass
 
@@ -87,7 +84,7 @@ def verify_checksum(filename: Union[str, Path], algorithm, original_checksum):
 
 
 def hiPSC_zarr() -> list[LayerDataTuple]:
-    doi = "10.5281_zenodo.11262587"
+    doi = "10.5281_zenodo.20429951"
     zarr_url = "20200812-CardiomyocyteDifferentiation14-Cycle1_mip.zarr"
     return load_zarr(doi, zarr_url)
 
@@ -101,7 +98,7 @@ def leukemia_zarr() -> list[LayerDataTuple]:
 def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
     ome_zarr = load_ome_zarr_from_zenodo(doi, zarr_url)
     if ome_zarr:
-        return [
+        return [  # type: ignore[return-value]
             (
                 ome_zarr.data,
                 {
@@ -110,12 +107,12 @@ def load_zarr(doi: str, zarr_url: Union[str, Path]) -> list[LayerDataTuple]:
                     "contrast_limits": ome_zarr.metadata["contrast_limits"],
                     "colormap": ome_zarr.metadata["colormap"],
                     "metadata": {"sample_path": ome_zarr.zarr.path},
-                    "scale": ome_zarr.metadata["coordinateTransformations"][0][
-                        0
-                    ]["scale"][-3:],
+                    "scale": ome_zarr.metadata["coordinateTransformations"][0][0][
+                        "scale"
+                    ][-3:],
                 },
                 "image",
             )
         ]
     else:
-        return [(None,)]
+        return []

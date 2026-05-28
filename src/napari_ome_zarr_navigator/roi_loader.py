@@ -17,7 +17,7 @@ from ngio.utils import (
     StoreOrGroup,
     fractal_fsspec_store,
 )
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
     ROILoaderSignals,
@@ -38,7 +38,7 @@ logger.setLevel(logging.INFO)
 class ROILoader(Container):
     def __init__(
         self,
-        viewer: napari.viewer.Viewer,
+        viewer: "napari.Viewer",
         extra_widgets=None,
     ):
         self._viewer = viewer
@@ -51,7 +51,8 @@ class ROILoader(Container):
 
         # Loading button variables
         self._dots = 0
-        self._loading_timer = QTimer(interval=300)
+        self._loading_timer = QTimer()  # type: ignore[call-arg]
+        self._loading_timer.setInterval(300)
         self._loading_timer.timeout.connect(self._animate_loading)
 
         # Translation to move position of ROIs loaded
@@ -74,22 +75,23 @@ class ROILoader(Container):
             value=False, text="Remove existing labels"
         )
         self._run_button = PushButton(value=False, text="Load ROI")
-        self._ome_zarr_container: ngio.OmeZarrContainer = None
+        self._ome_zarr_container: ngio.OmeZarrContainer | None = None
 
         self.image_changed_event = ROILoaderSignals()
 
         # Add timers for state changes
-        self._init_timer = QTimer(singleShot=True, interval=150)
+        self._init_timer = QTimer()  # type: ignore[call-arg]
+        self._init_timer.setSingleShot(True)
+        self._init_timer.setInterval(150)
         self._init_timer.timeout.connect(self._enter_initializing)
 
-        # State of the load button
-        self._state = None
+        # State of the load button — _state starts as None; the setter call
+        # below immediately transitions it to INITIALIZING
+        self._state: LoaderState | None = None
         self.state = LoaderState.INITIALIZING
 
         # Initialize possible choices
-        self.image_changed_event.image_changed.connect(
-            self._start_initialization
-        )
+        self.image_changed_event.image_changed.connect(self._start_initialization)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
         self._run_button.clicked.connect(self.run)
 
@@ -113,19 +115,17 @@ class ROILoader(Container):
         return self._ome_zarr_container
 
     @ome_zarr_container.setter
-    def ome_zarr_container(self, value) -> ngio.OmeZarrContainer:
+    def ome_zarr_container(self, value: ngio.OmeZarrContainer | None) -> None:
         if self._ome_zarr_container != value:
             self._ome_zarr_container = value
-            self.image_changed_event.image_changed.emit(
-                self._ome_zarr_container
-            )
+            self.image_changed_event.image_changed.emit(self._ome_zarr_container)
 
     @property
-    def state(self) -> LoaderState:
+    def state(self) -> LoaderState | None:
         return self._state
 
     @state.setter
-    def state(self, new: LoaderState):
+    def state(self, new: LoaderState) -> None:
         self._state = new
         if new is LoaderState.INITIALIZING:
             self._run_button.enabled = False
@@ -179,7 +179,7 @@ class ROILoader(Container):
         def _get_tables():
             return self.get_roi_tables()
 
-        tbl_worker = _get_tables()
+        tbl_worker = _get_tables()  # type: ignore[call-arg]
         tbl_worker.returned.connect(self._on_tables_ready)
         tbl_worker.start()
 
@@ -216,7 +216,7 @@ class ROILoader(Container):
         self._on_init_step_done()
 
         # (2) now that tables are populated, fetch ROI‐names:
-        roi_worker = self._fetch_rois(self._roi_table_picker.value)
+        roi_worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
         roi_worker.returned.connect(self._apply_roi_choices_update)
         roi_worker.returned.connect(self._on_init_step_done)
         roi_worker.start()
@@ -235,14 +235,12 @@ class ROILoader(Container):
             self.state = LoaderState.INITIALIZING
 
     @thread_worker
-    def _fetch_rois(self, table_name: str) -> list[str]:
+    def _fetch_rois(self, table_name: str) -> list[str | None]:
         """
         Worker that returns the list of ROI names for the given table.
         """
         if self.ome_zarr_container is not None:
-            ngio_table = self.ome_zarr_container.get_generic_roi_table(
-                name=table_name
-            )
+            ngio_table = self.ome_zarr_container.get_generic_roi_table(name=table_name)
             return [r.name for r in ngio_table.rois()]
         else:
             return [""]
@@ -261,7 +259,7 @@ class ROILoader(Container):
         self._begin_init()
 
         # 2) fetch table names exactly like in _start_initialization
-        worker = self._fetch_rois(self._roi_table_picker.value)
+        worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
         worker.returned.connect(self._apply_roi_choices_update)
 
         # 3) when done, cancel timer + go ready
@@ -304,17 +302,17 @@ class ROILoader(Container):
         self._dots = (self._dots + 1) % 4
         self._run_button.text = "Loading" + "." * self._dots
 
-    def update_available_image_attrs(self, new_zarr_img):
-        if new_zarr_img:
-            channels = self.ome_zarr_container.channel_labels
-            levels = sorted(self.ome_zarr_container.level_paths)
+    def update_available_image_attrs(self, new_zarr_img: ngio.OmeZarrContainer | None):
+        if new_zarr_img is not None:
+            channels = new_zarr_img.channel_labels
+            levels = sorted(new_zarr_img.level_paths)
             try:
-                labels = self.ome_zarr_container.list_labels()
+                labels = new_zarr_img.list_labels()
             except NgioValidationError:
                 labels = []
             # ngio version now strictly only loads feature tables
             try:
-                features = self.ome_zarr_container.tables_container.list(
+                features = new_zarr_img.tables_container.list(
                     filter_types="feature_table"
                 )
             except NgioValidationError:
@@ -421,9 +419,9 @@ class ROILoader(Container):
 class ROILoaderImage(ROILoader):
     def __init__(
         self,
-        viewer: napari.viewer.Viewer,
-        zarr_url: str = None,
-        token: str = None,
+        viewer: "napari.Viewer",
+        zarr_url: str | None = None,
+        token: str | None = None,
     ):
         self.zarr_selector = ZarrSelector()
 
@@ -457,7 +455,7 @@ class ROILoaderImage(ROILoader):
         else:
             store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
 
-        worker = self._load_container(store)
+        worker = self._load_container(store)  # type: ignore[call-arg]
         worker.returned.connect(self._on_image_container_ready)
         worker.start()
 
@@ -465,7 +463,7 @@ class ROILoaderImage(ROILoader):
 class ROILoaderPlate(ROILoader):
     def __init__(
         self,
-        viewer: napari.viewer.Viewer,
+        viewer: "napari.Viewer",
         plate_store: StoreOrGroup,
         row: str,
         col: str,
@@ -475,9 +473,7 @@ class ROILoaderPlate(ROILoader):
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
-        self.plate = open_ome_zarr_plate(
-            store=self.plate_store, cache=True, mode="r"
-        )
+        self.plate = open_ome_zarr_plate(store=self.plate_store, cache=True, mode="r")
         self.row = row
         self.col = col
         self.image_browser = image_browser
@@ -516,7 +512,7 @@ class ROILoaderPlate(ROILoader):
         image_store = self.plate.get_image_store(
             row=self.row, column=self.col, image_path=self._zarr_picker.value
         )
-        worker = self._load_container(image_store)
+        worker = self._load_container(image_store)  # type: ignore[call-arg]
         worker.returned.connect(self._on_image_container_ready)
         worker.start()
 
