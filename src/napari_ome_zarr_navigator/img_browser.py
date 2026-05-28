@@ -215,14 +215,6 @@ class ImgBrowser(Container):
         return wells_str, pd.concat(dfs, ignore_index=True)
 
     def set_all_wells_for_selection(self):
-        # wells = []
-        # dfs = []
-        # for well in self.zarr_plate.wells_paths():
-        #     row, col = well.split("/")
-        #     wells.append(f"{row}{col}")
-        #     dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
-        # wells_str = sorted(wells, key=self.split_well_name_for_sorting)
-        # self.df = pd.concat(dfs, ignore_index=True)
         wells_str, self.df = self.get_plate_wells()
         self.well.choices = wells_str
         self.well._default_choices = wells_str
@@ -334,11 +326,6 @@ class ImgBrowser(Container):
             tbl = self.df.loc[and_filter]
             rowcol_set = set(zip(tbl["row"], tbl["col"]))
             wells, _ = self.get_plate_wells(filters=rowcol_set)
-            # print(tbl)
-            # # FIXME: Avoid this dropping 0 in 03 if it existed.
-            # wells = (
-            #     (tbl["row"] + tbl["col"].astype(str)).sort_values().unique()
-            # )
             self.well.choices = wells
             self.well._default_choices = wells
             if len(wells) > 0:
