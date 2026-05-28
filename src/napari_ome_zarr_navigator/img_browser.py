@@ -130,7 +130,7 @@ class ImgBrowser(Container):
             )
         try:
             self.zarr_plate = open_ome_zarr_plate(
-                self.plate_store, cache=True, parallel_safe=False, mode="r"
+                self.plate_store, cache=True, mode="r"
             )
         except NgioFileNotFoundError:
             self.zarr_plate = None

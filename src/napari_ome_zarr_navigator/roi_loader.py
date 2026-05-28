@@ -240,8 +240,8 @@ class ROILoader(Container):
         Worker that returns the list of ROI names for the given table.
         """
         if self.ome_zarr_container is not None:
-            ngio_table = self.ome_zarr_container.get_table(
-                name=table_name, check_type="generic_roi_table"
+            ngio_table = self.ome_zarr_container.get_generic_roi_table(
+                name=table_name
             )
             return [r.name for r in ngio_table.rois()]
         else:
@@ -307,7 +307,7 @@ class ROILoader(Container):
     def update_available_image_attrs(self, new_zarr_img):
         if new_zarr_img:
             channels = self.ome_zarr_container.channel_labels
-            levels = sorted(self.ome_zarr_container.levels_paths)
+            levels = sorted(self.ome_zarr_container.level_paths)
             try:
                 labels = self.ome_zarr_container.list_labels()
             except NgioValidationError:
@@ -476,7 +476,7 @@ class ROILoaderPlate(ROILoader):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
         self.plate = open_ome_zarr_plate(
-            store=self.plate_store, cache=True, mode="r", parallel_safe=False
+            store=self.plate_store, cache=True, mode="r"
         )
         self.row = row
         self.col = col

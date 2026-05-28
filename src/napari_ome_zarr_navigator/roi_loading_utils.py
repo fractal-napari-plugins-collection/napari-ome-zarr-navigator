@@ -1,7 +1,7 @@
 # Utils for threaded loading of ROIs & adding them to the viewer.
 import logging
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 import napari
 import napari.layers
@@ -10,7 +10,6 @@ import ngio.tables
 import numpy as np
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
-from ngio.tables._tables_container import TypedRoiTable
 from qtpy.QtCore import QObject, Signal
 
 from napari_ome_zarr_navigator.util import (
@@ -34,34 +33,30 @@ def fetch_single_image(
 ):
     """Load exactly one channel's ROI and return kwargs for viewer.add_image."""
     # TODO: Refactor ROI table loading to happen before the parallelized fetch
-    ngio_table = ome_zarr_container.get_table(
-        roi_table, check_type=TypedRoiTable
-    )
+    ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (
-        translation[0] + curr_roi.y,
-        translation[1] + curr_roi.x,
+        translation[0] + curr_roi["y"].start,
+        translation[1] + curr_roi["x"].start,
     )
 
     ngio_img = ome_zarr_container.get_image(path=level)
 
     if lazy:
-        arr = ngio_img.get_roi(
-            roi=curr_roi, channel_selection=channel, mode="dask"
+        arr = ngio_img.get_roi_as_dask(
+            roi=curr_roi, channel_selection=channel
         ).squeeze()
     else:
-        arr = np.squeeze(
-            ngio_img.get_roi(
-                roi=curr_roi, channel_selection=channel, mode="numpy"
-            )
-        )
+        arr = ngio_img.get_roi_as_numpy(
+            roi=curr_roi, channel_selection=channel
+        ).squeeze()
 
     if not np.any(arr):
         # nothing to display
         return None
 
     # compute scale
-    #TODO: cleaner handling of tyx edge-case
+    # TODO: cleaner handling of tyx edge-case
     if arr.ndim == 3:
         z, y, x = ngio_img.pixel_size.zyx
         scale = (z, y, x)
@@ -78,7 +73,7 @@ def fetch_single_image(
 
     # build colormap + contrast_limits
     idx = ome_zarr_container.get_channel_idx(channel_label=channel)
-    vis = ome_zarr_container.image_meta.channels_meta.channels[
+    vis = ome_zarr_container.meta.channels_meta.channels[
         idx
     ].channel_visualisation
     try:
@@ -118,13 +113,11 @@ def fetch_labels_and_features(
     Returns a dict with keys "labels" (a list of args for add_labels)
     and "features" (a list of {layer_name, df} to attach).
     """
-    ngio_table = ome_zarr_container.get_table(
-        roi_table, check_type=TypedRoiTable
-    )
+    ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
     curr_roi = ngio_table.get(roi_name)
     roi_translation = (
-        translation[0] + curr_roi.y,
-        translation[1] + curr_roi.x,
+        translation[0] + curr_roi["y"].start,
+        translation[1] + curr_roi["x"].start,
     )
 
     result = {"labels": [], "features": []}
@@ -137,9 +130,9 @@ def fetch_labels_and_features(
             name=lbl, pixel_size=img_meta, strict=False
         )
         if lazy:
-            arr = ngio_lbl.get_roi(roi=curr_roi, mode="dask").squeeze()
+            arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()
         else:
-            arr = np.squeeze(ngio_lbl.get_roi(roi=curr_roi, mode="numpy"))
+            arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()
 
         if arr.ndim == 3:
             z, y, x = ngio_lbl.pixel_size.zyx
@@ -166,9 +159,7 @@ def fetch_labels_and_features(
 
     # 2) load features
     for tbl in features:
-        feat_tbl = ome_zarr_container.get_table(
-            tbl, check_type="feature_table"
-        )
+        feat_tbl = ome_zarr_container.get_feature_table(tbl)
         df = feat_tbl.dataframe.copy()
         df.index = df.index.astype(int)
         lbl_idx = find_matching_label_layer_index(
@@ -220,7 +211,7 @@ def orchestrate_load_roi(
     features: list[str],
     translation: tuple[int, int],
     blending_int: Optional[str] = None,
-    set_state_fn: Optional[callable] = None,
+    set_state_fn: Optional[Callable] = None,
     lazy: bool = False,
     zarr_id: str = "",
 ):

@@ -47,9 +47,7 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
 
 
 def calculate_well_positions(plate_store, row, col, is_plate=True):
-    zarr_plate = open_ome_zarr_plate(
-        plate_store, cache=True, parallel_safe=False, mode="r"
-    )
+    zarr_plate = open_ome_zarr_plate(plate_store, cache=True, mode="r")
     # Load the first image of the selected well to get shape & pixel sizes
     # Makes the assumption that all images in all wells will have the same shapes
     image_store = zarr_plate.get_image_store(
@@ -60,7 +58,7 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
     ome_zarr_container = open_ome_zarr_container(
         image_store, cache=True, mode="r"
     )
-    level = ome_zarr_container.levels_paths[0]
+    level = ome_zarr_container.level_paths[0]
     ome_zarr_image = ome_zarr_container.get_image(path=level)
     shape = ome_zarr_image.shape[-2:]
     scale = (ome_zarr_image.pixel_size.y, ome_zarr_image.pixel_size.x)
