@@ -51,9 +51,7 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
     roi_loader._remove_old_labels_box.value = False
 
     roi_loader.run()
-    with qtbot.waitSignal(
-        roi_loader.image_changed_event.load_finished, timeout=10000
-    ):
+    with qtbot.waitSignal(roi_loader.image_changed_event.load_finished, timeout=10000):
         pass
 
     # TODO: Test that layers got added and that label layer has features
@@ -85,7 +83,7 @@ def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     assert roi_loader._channel_picker.choices == ("DAPI", "nanog", "Lamin B1")
     assert roi_loader._level_picker.value == "0"
     assert roi_loader._label_picker.choices == ("nuclei",)
-    assert roi_loader._feature_picker.choices == ("measurements",)
+    assert roi_loader._feature_picker.choices == ("measurements", "measurements_csv")
     assert not roi_loader._remove_old_labels_box.value
 
     # Set parameters
@@ -98,9 +96,7 @@ def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     roi_loader._remove_old_labels_box.value = False
 
     roi_loader.run()
-    with qtbot.waitSignal(
-        roi_loader.image_changed_event.load_finished, timeout=10000
-    ):
+    with qtbot.waitSignal(roi_loader.image_changed_event.load_finished, timeout=10000):
         pass
 
     # TODO: Test that layers got added and that label layer has features
