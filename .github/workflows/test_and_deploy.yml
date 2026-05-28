@@ -43,22 +43,15 @@ jobs:
           git clone --depth 1 https://github.com/pyvista/gl-ci-helpers.git
           powershell gl-ci-helpers/appveyor/install_opengl.ps1
 
-      # note: if you need dependencies from conda, considering using
-      # setup-miniconda: https://github.com/conda-incubator/setup-miniconda
-      # and
-      # tox-conda: https://github.com/tox-dev/tox-conda
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install setuptools tox tox-gh-actions
+          python -m pip install ".[testing]" pyqt5
 
-      # this runs the platform-specific tests declared in tox.ini
-      - name: Test with tox
+      - name: Test
         uses: aganders3/headless-gui@v1
         with:
-          run: python -m tox
-        env:
-          PLATFORM: ${{ matrix.platform }}
+          run: pytest -v --color=yes --cov=napari_ome_zarr_navigator --cov-report=xml
 
       - name: Coverage
         uses: codecov/codecov-action@v3
@@ -86,7 +79,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -U setuptools setuptools_scm wheel twine build
+          pip install -U build twine hatchling hatch-vcs
       - name: Build and publish
         env:
           TWINE_USERNAME: __token__

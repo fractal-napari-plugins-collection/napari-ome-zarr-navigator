@@ -1,0 +1,35 @@
+[workspace]
+name = "napari-ome-zarr-navigator"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64", "win-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+napari = ">=0.7.0"
+pyqt6 = "*"
+ruff = "*"
+pyright = "*"
+pandas = "<3"
+
+[pypi-dependencies]
+napari-ome-zarr-navigator = { path = ".", editable = true, extras = ["testing"] }
+
+[feature.local-dev.pypi-dependencies]
+napari-feature-classifier = "*"
+napari-feature-visualization = "*"
+ipykernel = "*"
+
+[environments]
+local-dev = ["local-dev"]
+
+[tasks]
+test = "pytest -v --color=yes --cov=napari_ome_zarr_navigator --cov-report=xml"
+napari = "napari"
+lint = "ruff check src"
+format = "ruff format src"
+typecheck = "pyright src"
+check = { depends-on = ["lint", "typecheck", "test"] }
+
+[tasks.napari-local]
+cmd = "napari"
+default-environment = "local-dev"
