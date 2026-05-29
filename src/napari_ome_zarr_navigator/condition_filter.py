@@ -21,7 +21,7 @@ class ConditionFilterSignals(QObject):
 
 
 class ConditionTableFilter:
-    """Owns all condition-table and filter-widget logic for ImgBrowser.
+    """Owns all condition-table and filter-widget logic for PlateBrowser.
 
     Emits `signals.wells_changed` (list[str]) whenever the active filter
     changes so the caller can update the well selector.
@@ -113,6 +113,34 @@ class ConditionTableFilter:
         """Load and normalise a condition table from the plate."""
         try:
             raw = zarr_plate.get_condition_table(name=table_name).dataframe
+        except NgioValueError:
+            return None
+        return parse_condition_table(raw)
+
+    def init_image_condition_tables(self, zarr_plate) -> None:
+        """Populate condition-table selector from image-level tables in the plate."""
+        try:
+            tables = zarr_plate.list_image_tables(filter_types="condition_table")
+        except NgioValueError:
+            tables = []
+        if tables:
+            self.condition_tables = tables
+            self.condition_name_selector.choices = tables
+            self.filter_container.visible = True
+        else:
+            self.filter_container.visible = False
+            msg = "No condition tables found in the images"
+            logger.info(msg)
+            show_info(msg)
+
+    def load_image_condition_table(
+        self, zarr_plate, table_name: str
+    ) -> pd.DataFrame | None:
+        """Aggregate a condition table from all images via ngio."""
+        try:
+            raw = zarr_plate.concatenate_image_tables(
+                name=table_name, strict=False
+            ).dataframe
         except NgioValueError:
             return None
         return parse_condition_table(raw)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from napari_ome_zarr_navigator.img_browser import ImgBrowser
+from napari_ome_zarr_navigator.plate_browser import PlateBrowser
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoader,
     ROILoaderImage,
@@ -19,13 +19,13 @@ def test_roi_loader_init(make_napari_viewer):
 def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
     viewer = make_napari_viewer()
     plate_url = zenodo_zarr[1]
-    image_browser = ImgBrowser(viewer=viewer)
+    plate_browser = PlateBrowser(viewer=viewer)
     roi_loader = ROILoaderPlate(
         viewer,
         plate_store=plate_url,
         row="B",
         col="03",
-        image_browser=image_browser,
+        plate_browser=plate_browser,
         is_plate=True,
     )
     with qtbot.waitSignal(

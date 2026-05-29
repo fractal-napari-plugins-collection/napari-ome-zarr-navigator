@@ -414,7 +414,7 @@ class ROILoaderPlate(ROILoader):
         plate_store: StoreOrGroup,
         row: str,
         col: str,
-        image_browser,
+        plate_browser,
         is_plate: bool,
         plate_id: str = "",
     ):
@@ -423,7 +423,7 @@ class ROILoaderPlate(ROILoader):
         self.plate = open_ome_zarr_plate(store=self.plate_store, cache=True, mode="r")
         self.row = row
         self.col = col
-        self.image_browser = image_browser
+        self.plate_browser = plate_browser
         self.plate_id = plate_id
         super().__init__(
             viewer=viewer,
@@ -464,8 +464,8 @@ class ROILoaderPlate(ROILoader):
         worker.start()
 
     def _update_defaults(self):
-        "Updates Image Browser default when ROIs are loaded"
-        self.image_browser.update_defaults(
+        "Updates Plate Browser defaults when ROIs are loaded"
+        self.plate_browser.update_defaults(
             zarr_image_subgroup=self._zarr_picker.value,
             roi_table=self._roi_table_picker.value,
             roi_name=self._roi_picker.value,

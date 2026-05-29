@@ -4,12 +4,10 @@ from contextlib import suppress
 import napari
 import napari.layers
 import numpy as np
-import pandas as pd
 from magicgui.widgets import (
-    CheckBox,
+    ComboBox,
     Container,
     FloatSpinBox,
-    ProgressBar,
     PushButton,
     Select,
 )
@@ -37,7 +35,7 @@ from napari_ome_zarr_navigator.well_utils import (
 logger = logging.getLogger(__name__)
 
 
-class ImgBrowser(Container):
+class PlateBrowser(Container):
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
         self._zarr_selector = ZarrSelector()
@@ -53,16 +51,18 @@ class ImgBrowser(Container):
             tooltip="Once you've loaded a ROI with the 'Select ROI to load' "
             "button, this allows you to load the same ROI for different wells.",
         )
-        self._load_image_condition_tables = CheckBox(
-            value=False, text="Load image condition tables"
-        )
-        self._load_plate_condition_tables = CheckBox(
-            value=False, text="Load plate condition tables"
+        self._condition_table_source = ComboBox(
+            label="Filter by condition",
+            choices=[
+                "No",
+                "Plate-based condition table",
+                "Image-based condition table (slow)",
+            ],
+            value="No",
         )
         self.roi_loader = None
         self.roi_widget = None
         self.filter_widget = None
-        self.progress = ProgressBar(visible=False)
         self.default_zarr_image_subgroup = None
         self.default_roi_table = None
         self.default_roi_name = None
@@ -82,9 +82,7 @@ class ImgBrowser(Container):
             widgets=[
                 self._zarr_selector,
                 self.well,
-                # self._load_image_condition_tables,
-                self._load_plate_condition_tables,
-                self.progress,
+                self._condition_table_source,
                 self._cond_filter.filter_container,
                 Container(
                     widgets=[self.zoom_level, self.select_well],
@@ -102,10 +100,8 @@ class ImgBrowser(Container):
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
-        # TODO: Reenable image condition tables
-        # self._load_image_condition_tables.changed.connect(self.initialize_filters)
-        self._load_plate_condition_tables.changed.connect(
-            self.init_plate_condition_tables
+        self._condition_table_source.changed.connect(
+            self.on_condition_table_source_changed
         )
         # initialize_filters calls filter_df — no need to connect filter_df
         # separately here
@@ -132,23 +128,21 @@ class ImgBrowser(Container):
 
         self._plate_mgr.open_zarr_plate()
         if self._plate_mgr.zarr_plate:
-            if self._load_plate_condition_tables.value:
+            source = self._condition_table_source.value
+            if source == "Plate-based condition table":
                 df = self._cond_filter.load_plate_condition_table(
                     self._plate_mgr.zarr_plate,
                     table_name=self._cond_filter.condition_name_selector.value,
                 )
-                if df is not None:
-                    self._cond_filter.setup_filters(df)
-                else:
-                    self._cond_filter.reset()
-            elif self._load_image_condition_tables.value:
-                df = self.load_image_condition_table(
-                    table_name=self._cond_filter.condition_name_selector.value
+            elif source == "Image-based condition table (slow)":
+                df = self._cond_filter.load_image_condition_table(
+                    self._plate_mgr.zarr_plate,
+                    table_name=self._cond_filter.condition_name_selector.value,
                 )
-                if df is not None:
-                    self._cond_filter.setup_filters(df)
-                else:
-                    self._cond_filter.reset()
+            else:
+                df = None
+            if df is not None:
+                self._cond_filter.setup_filters(df)
             else:
                 self._cond_filter.reset()
 
@@ -300,42 +294,16 @@ class ImgBrowser(Container):
             logger.info(msg)
             show_info(msg)
 
-    def load_image_condition_table(self, table_name="condition"):
-        assert self._plate_mgr.zarr_plate is not None
-        wells = self._plate_mgr.zarr_plate.get_wells()
-        self.progress.visible = True
-        self.progress.min = 0
-        self.progress.max = len(wells)
-        self.progress.value = 0
-        all_tables = []
-        for well_path, well in self._plate_mgr.zarr_plate.get_wells().items():
-            # Currently only loads condition tables from the first image
-            image = well.get_image(image_path=well.paths()[0])
-            try:
-                all_tables.append(image.get_table(name=table_name).dataframe)
-            except KeyError:
-                logger.info(
-                    f'The table "{table_name}" was not found in well {well_path}'
-                )
-
-            self.progress.value += 1
-        self.progress.visible = False
-        if len(all_tables) == 0:
-            msg = "No condition table is present in the OME-Zarr."
-            logger.info(msg)
-            show_info(msg)
-            return None
-        else:
-            return pd.concat(all_tables, ignore_index=True)
-
-    def init_plate_condition_tables(self):
-        if self._load_plate_condition_tables.value:
-            assert self._plate_mgr.zarr_plate is not None
+    def on_condition_table_source_changed(self):
+        if not self._plate_mgr.zarr_plate:
+            return
+        self._cond_filter.clear_condition_tables()
+        self._cond_filter.reset()
+        source = self._condition_table_source.value
+        if source == "Plate-based condition table":
             self._cond_filter.init_condition_tables(self._plate_mgr.zarr_plate)
-        else:
-            self._cond_filter.clear_condition_tables()
-            self._cond_filter.reset()
-            # TODO: Reset all currently set filters
+        elif source == "Image-based condition table (slow)":
+            self._cond_filter.init_image_condition_tables(self._plate_mgr.zarr_plate)
 
     def update_defaults(
         self,
