@@ -228,8 +228,9 @@ class LoaderButtonController:
     from each step's returned callback. set_state() handles LOADING animation.
     """
 
-    def __init__(self, button: PushButton) -> None:
+    def __init__(self, button: PushButton, ready_label: str = "Load ROI") -> None:
         self._button = button
+        self._ready_label = ready_label
         self._dots = 0
         self._pending = 0
         self.current_state: LoaderState | None = None
@@ -252,7 +253,7 @@ class LoaderButtonController:
             self._button.text = "Initializing"
         elif new is LoaderState.READY:
             self._button.enabled = True
-            self._button.text = "Load ROI"
+            self._button.text = self._ready_label
         elif new is LoaderState.LOADING:
             self._button.enabled = False
             self._button.text = "Loading"

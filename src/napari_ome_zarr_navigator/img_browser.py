@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from magicgui.widgets import (
     CheckBox,
-    ComboBox,
     Container,
     FloatSpinBox,
     ProgressBar,
@@ -15,30 +14,24 @@ from magicgui.widgets import (
     Select,
 )
 from napari.utils.notifications import show_info
-from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from ngio.utils import (
-    NgioFileNotFoundError,
-    NgioValidationError,
-    NgioValueError,
-    fractal_fsspec_store,
-)
-from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
+from ngio import open_ome_zarr_container
+from ngio.utils import fractal_fsspec_store
 
+from napari_ome_zarr_navigator.condition_filter import ConditionTableFilter
+from napari_ome_zarr_navigator.plate_manager import PlateManager
 from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
     remove_existing_label_layers,
 )
 from napari_ome_zarr_navigator.roi_loading_utils import orchestrate_load_roi
 from napari_ome_zarr_navigator.util import (
-    LoaderState,
+    LoaderButtonController,
     ZarrSelector,
     calculate_well_positions,
 )
 from napari_ome_zarr_navigator.well_utils import (
     WELL_LAYER_PATTERN,
     get_row_cols,
-    parse_condition_table,
-    well_sort_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +41,7 @@ class ImgBrowser(Container):
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
         self._zarr_selector = ZarrSelector()
+        self._plate_mgr = PlateManager(self._zarr_selector)
         self.filters = []
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
@@ -77,18 +71,12 @@ class ImgBrowser(Container):
         self.default_labels = None
         self.default_features = None
         self.remove_old_labels = False
-        self.zarr_plate = None
-        self.plate_store = None
-        self.filter_names = None
-        self.condition_tables = None
-        self.condition_name_selector = ComboBox()
-        self.df: pd.DataFrame | None = None
-        self.filter_container = Container(layout="vertical", visible=False)
+        self._cond_filter = ConditionTableFilter(self._plate_mgr)
 
-        # Load button state handling
-        self._default_dots = 0
-        self._default_loading_timer = QTimer(interval=300, singleShot=False)
-        self._default_loading_timer.timeout.connect(self._animate_default_loading)
+        self._default_btn_ctrl = LoaderButtonController(
+            self.btn_load_default_roi,
+            ready_label="Load selected ROI for additional well(s)",
+        )
 
         super().__init__(
             widgets=[
@@ -97,7 +85,7 @@ class ImgBrowser(Container):
                 # self._load_image_condition_tables,
                 self._load_plate_condition_tables,
                 self.progress,
-                self.filter_container,
+                self._cond_filter.filter_container,
                 Container(
                     widgets=[self.zoom_level, self.select_well],
                     label="Zoom level",
@@ -121,34 +109,11 @@ class ImgBrowser(Container):
         )
         # initialize_filters calls filter_df — no need to connect filter_df
         # separately here
-        self.condition_name_selector.changed.connect(self.initialize_filters)
+        self._cond_filter.condition_name_selector.changed.connect(
+            self.initialize_filters
+        )
+        self._cond_filter.signals.wells_changed.connect(self._update_well_choices)
         self.viewer.layers.events.removed.connect(self.check_empty_layerlist)
-
-    def open_zarr_plate(self):
-        if self._zarr_selector._source_selector.value == "File":
-            self.plate_store = self._zarr_selector.url
-        else:
-            self.plate_store = fractal_fsspec_store(
-                self._zarr_selector.url,
-                fractal_token=self._zarr_selector.token,
-            )
-        try:
-            self.zarr_plate = open_ome_zarr_plate(
-                self.plate_store,
-                cache=True,
-                mode="r",  # type: ignore[arg-type]
-            )
-        except NgioFileNotFoundError:
-            self.zarr_plate = None
-        except NgioValidationError as e:
-            self.zarr_plate = None
-            msg = (
-                "No valid Zarr plate found at the provided URL. Verify the "
-                "URL to ensure it points to the root of the plate or "
-                f"check the validation error: \n {e}"
-            )
-            logger.info(msg)
-            show_info(msg)
 
     def initialize_filters(self):
         # Check if the zarr_url is empty & finish early
@@ -157,131 +122,55 @@ class ImgBrowser(Container):
             or self._zarr_selector.url == "."
             or self._zarr_selector.url == ""
         ):
-            self.is_plate = False
+            self._plate_mgr.clear()
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
             self.btn_load_default_roi.enabled = False
-            self.zarr_plate = None
             self.well.choices = []
             self.well._default_choices = []
             return
 
-        self.open_zarr_plate()
-        if self.zarr_plate:
-            self.is_plate = True
-            # Handle filter table setup & loading
+        self._plate_mgr.open_zarr_plate()
+        if self._plate_mgr.zarr_plate:
             if self._load_plate_condition_tables.value:
-                self.df = self.load_plate_condition_table(
-                    table_name=self.condition_name_selector.value
+                df = self._cond_filter.load_plate_condition_table(
+                    self._plate_mgr.zarr_plate,
+                    table_name=self._cond_filter.condition_name_selector.value,
                 )
-                # self.filter_container.visible = True
+                if df is not None:
+                    self._cond_filter.setup_filters(df)
+                else:
+                    self._cond_filter.reset()
             elif self._load_image_condition_tables.value:
-                self.df = self.load_image_condition_table(
-                    table_name=self.condition_name_selector.value
+                df = self.load_image_condition_table(
+                    table_name=self._cond_filter.condition_name_selector.value
                 )
-                # self.filter_container.visible = True
+                if df is not None:
+                    self._cond_filter.setup_filters(df)
+                else:
+                    self._cond_filter.reset()
             else:
-                self.df = None
-                # self.filter_container.visible = False
-
-            # Display well list
-            if self.df is not None:
-                self.set_filtered_wells_for_selection()
-            else:
-                self.set_all_wells_for_selection()
+                self._cond_filter.reset()
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
         else:
-            self.is_plate = False
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
 
-    def get_plate_wells(self, filters=None) -> tuple[list[str], pd.DataFrame]:
-        # Load the available wells based on the plate (with names as they are
-        # in the plate, e.g. padding 0s or not)
-        # With the option to filter for wells. Filters is a list of zipped
-        # values for row & column. Column values must be integers, not strings.
-        assert self.zarr_plate is not None
-        wells = []
-        dfs = []
-        if filters is not None:
-            for well in self.zarr_plate.wells_paths():
-                row, col = well.split("/")
-                col_int = int(col)
-                if (row, col_int) in filters:
-                    wells.append(f"{row}{col}")
-                    dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
-        else:
-            for well in self.zarr_plate.wells_paths():
-                row, col = well.split("/")
-                wells.append(f"{row}{col}")
-                dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
-        wells_str = sorted(wells, key=well_sort_key)
-        return wells_str, pd.concat(dfs, ignore_index=True)
-
-    def set_all_wells_for_selection(self):
-        wells_str, self.df = self.get_plate_wells()
-        self.well.choices = wells_str
-        self.well._default_choices = wells_str
-        self.filter_names = None
-        # Hide filter container if no filters needed
-        self.filter_container.clear()
-        self.filter_container.visible = False
-
-    def set_filtered_wells_for_selection(self):
-        assert self.df is not None
-        self.df_without_pk = self.df.drop(columns=["row", "col"])
-        self.filter_names = self.df_without_pk.columns
-        filter_widgets = [
-            Container(
-                widgets=[
-                    ComboBox(
-                        choices=self.df_without_pk[filter_name]
-                        .sort_values()  # type: ignore[call-overload]
-                        .unique(),
-                        enabled=False,
-                    ),
-                    CheckBox(label=filter_name, value=False),
-                ],
-                layout="horizontal",
-            )
-            for filter_name in self.filter_names
-        ]
-
-        # self.condition_name_selector = ComboBox(choices=self.condition_tables)
-        self.filter_container.clear()
-        self.filter_container.extend([self.condition_name_selector])  # type: ignore[arg-type]
-        self.filter_container.extend(filter_widgets)  # type: ignore[arg-type]
-        self.filter_container.visible = True
-
-        # Connect signals
-        for i, filter_widget in enumerate(filter_widgets):
-            combo_box, check_box = filter_widget[0], filter_widget[1]
-
-            check_box.changed.connect(self.toggle_filter(i))
-            combo_box.changed.connect(self.filter_df)
-            check_box.changed.connect(self.filter_df)
-
-    def toggle_filter(self, i):
-        def toggle_on_change():
-            filter_row = self.filter_container[i + 1]
-            combo_box, check_box = filter_row[0], filter_row[1]
-            combo_box.enabled = check_box.value
-
-        return toggle_on_change
+    def _update_well_choices(self, wells: list) -> None:
+        self.well.choices = wells
+        self.well._default_choices = wells
 
     def check_empty_layerlist(self):
         if len(self.viewer.layers) == 0:
             self._zarr_selector.set_url("")
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
-            self.df = pd.DataFrame()
             self.well.choices = []
             self.well._default_choices = []
-            if self.filter_names is not None:
-                self.filter_container.clear()
-                self.filter_container.visible = False
+            self._cond_filter.filter_container.clear()
+            self._cond_filter.filter_container.visible = False
 
     def get_zarr_url(self):
         # When the user adds new image layers, check if they have zarr_urls in
@@ -294,37 +183,8 @@ class ImgBrowser(Container):
             if "sample_path" in active.metadata:
                 self._zarr_selector.set_url(active.metadata["sample_path"])
 
-    def filter_df(self):
-        if self.filter_names is not None:
-            assert self.df is not None
-            filter_conditions = []
-
-            for i, filter_name in enumerate(self.filter_names):
-                combo_box, check_box = (
-                    self.filter_container[i + 1][0],
-                    self.filter_container[i + 1][1],
-                )
-
-                if check_box.value:
-                    condition = self.df[filter_name] == combo_box.value
-                else:
-                    condition = pd.Series(True, index=self.df.index)
-
-                filter_conditions.append(condition)
-
-            # Combine conditions with logical AND
-            and_filter = pd.concat(filter_conditions, axis=1).all(axis=1)
-
-            tbl = self.df.loc[and_filter]
-            rowcol_set = set(zip(tbl["row"], tbl["col"], strict=True))
-            wells, _ = self.get_plate_wells(filters=rowcol_set)
-            self.well.choices = wells
-            self.well._default_choices = wells
-            if len(wells) > 0:
-                self.well.value = wells[0]
-
     def launch_load_roi(self):
-        assert self.plate_store is not None
+        assert self._plate_mgr.plate_store is not None
         wells = get_row_cols(self.well.value)
         if len(wells) != 1:
             msg = "Please select a single well."
@@ -337,11 +197,11 @@ class ImgBrowser(Container):
 
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
-                self.plate_store,
+                self._plate_mgr.plate_store,
                 wells[0][0],
                 wells[0][1],
                 self,
-                self.is_plate,
+                self._plate_mgr.is_plate,
                 plate_id=self._zarr_selector.url,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
@@ -352,7 +212,7 @@ class ImgBrowser(Container):
             )
 
     def load_default_roi(self):
-        assert self.plate_store is not None
+        assert self._plate_mgr.plate_store is not None
         wells = get_row_cols(self.well.value)
 
         # Loop over all selected wells
@@ -362,7 +222,7 @@ class ImgBrowser(Container):
             layer_base_name = f"{well[0]}{well[1]}_"
             # Calculate translations
             translation, _ = calculate_well_positions(
-                plate_store=self.plate_store,
+                plate_store=self._plate_mgr.plate_store,
                 row=well[0],
                 col=well[1],
             )
@@ -394,34 +254,10 @@ class ImgBrowser(Container):
                 labels=self.default_labels,
                 features=self.default_features,
                 translation=tuple(translation),  # type: ignore[arg-type]
-                set_state_fn=self._on_default_state_change,
+                set_state_fn=self._default_btn_ctrl.set_state,
                 lazy=False,
                 zarr_id=zarr_url,
             )
-
-    def _animate_default_loading(self):
-        """Advance the dots on the default-ROI button every tick."""
-        self._default_dots = (self._default_dots + 1) % 4
-        self.btn_load_default_roi.text = "Loading" + "." * self._default_dots
-
-    def _on_default_state_change(self, new_state: LoaderState):
-        """
-        State-handler for btn_load_default_roi:
-        • on LOADING:  disable, reset, start timer
-        • on READY:    stop timer, reset text & enable
-        """
-        # always kill any running animation
-        self._default_loading_timer.stop()
-
-        if new_state is LoaderState.LOADING:
-            self._default_dots = 0
-            self.btn_load_default_roi.enabled = False
-            self.btn_load_default_roi.text = "Loading"
-            self._default_loading_timer.start()
-
-        elif new_state is LoaderState.READY:
-            self.btn_load_default_roi.enabled = True
-            self.btn_load_default_roi.text = "Load selected ROI for additional well(s)"
 
     def go_to_well(self):
         wells = get_row_cols(self.well.value)
@@ -439,10 +275,10 @@ class ImgBrowser(Container):
                     top_left_corner,
                     bottom_right_corner,
                 ) = calculate_well_positions(
-                    plate_store=self.plate_store,
+                    plate_store=self._plate_mgr.plate_store,
                     row=well[0],
                     col=well[1],
-                    is_plate=self.is_plate,
+                    is_plate=self._plate_mgr.is_plate,
                 )
                 rec = np.array([top_left_corner, bottom_right_corner])
                 self.viewer.add_shapes(
@@ -463,14 +299,14 @@ class ImgBrowser(Container):
             show_info(msg)
 
     def load_image_condition_table(self, table_name="condition"):
-        assert self.zarr_plate is not None
-        wells = self.zarr_plate.get_wells()
+        assert self._plate_mgr.zarr_plate is not None
+        wells = self._plate_mgr.zarr_plate.get_wells()
         self.progress.visible = True
         self.progress.min = 0
         self.progress.max = len(wells)
         self.progress.value = 0
         all_tables = []
-        for well_path, well in self.zarr_plate.get_wells().items():
+        for well_path, well in self._plate_mgr.zarr_plate.get_wells().items():
             # Currently only loads condition tables from the first image
             image = well.get_image(image_path=well.paths()[0])
             try:
@@ -492,38 +328,12 @@ class ImgBrowser(Container):
 
     def init_plate_condition_tables(self):
         if self._load_plate_condition_tables.value:
-            assert self.zarr_plate is not None
-            try:
-                plate_condition_tables = self.zarr_plate.list_tables(
-                    filter_types="condition_table"
-                )
-            except NgioValueError:
-                plate_condition_tables = []
-            if plate_condition_tables:
-                self.condition_tables = plate_condition_tables
-                self.condition_name_selector.choices = self.condition_tables
-                self.filter_container.visible = True
-            else:
-                self.filter_container.visible = False
-                msg = "No plate condition tables found"
-                logger.info(msg)
-                show_info(msg)
+            assert self._plate_mgr.zarr_plate is not None
+            self._cond_filter.init_condition_tables(self._plate_mgr.zarr_plate)
         else:
-            self.condition_tables = []
-            self.condition_name_selector.choices = []
-            self.filter_container.visible = False
-            self.set_all_wells_for_selection()
+            self._cond_filter.clear_condition_tables()
+            self._cond_filter.reset()
             # TODO: Reset all currently set filters
-
-    def load_plate_condition_table(self, table_name: str):
-        assert self.zarr_plate is not None
-        try:
-            condition_table = self.zarr_plate.get_condition_table(
-                name=table_name
-            ).dataframe
-        except NgioValueError:
-            return None
-        return parse_condition_table(condition_table)
 
     def update_defaults(
         self,
