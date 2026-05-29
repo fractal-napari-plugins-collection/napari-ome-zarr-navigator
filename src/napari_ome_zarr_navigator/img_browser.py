@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class ImgBrowser(Container):
-    def __init__(self, viewer: "napari.Viewer"):
+    def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
         self._zarr_selector = ZarrSelector()
         self.filters = []

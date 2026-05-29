@@ -34,11 +34,16 @@ from napari_ome_zarr_navigator.util import (
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Sentinel values shown in the UI when no ROI tables are found.
+# Whole-image loading is not yet implemented; these keep the UI from crashing.
+_NO_ROI_TABLE = "(none — load whole image)"
+_NO_ROI_NAME = "(whole image)"
+
 
 class ROILoader(Container):
     def __init__(
         self,
-        viewer: "napari.Viewer",
+        viewer: napari.Viewer,
         extra_widgets=None,
     ):
         self._viewer = viewer
@@ -205,9 +210,10 @@ class ROILoader(Container):
             masking_roi = self.ome_zarr_container.list_tables(
                 filter_types="masking_roi_table",
             )
-            return roi + masking_roi
+            tables = roi + masking_roi
+            return tables if tables else [_NO_ROI_TABLE]
         else:
-            return [""]
+            return [_NO_ROI_TABLE]
 
     def _on_tables_ready(self, table_list):
         # apply ROI‐tables dropdown
@@ -216,10 +222,15 @@ class ROILoader(Container):
         self._on_init_step_done()
 
         # (2) now that tables are populated, fetch ROI‐names:
-        roi_worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
-        roi_worker.returned.connect(self._apply_roi_choices_update)
-        roi_worker.returned.connect(self._on_init_step_done)
-        roi_worker.start()
+        if self._roi_table_picker.value == _NO_ROI_TABLE:
+            # No ROI tables found — skip worker, use sentinel name
+            self._apply_roi_choices_update([_NO_ROI_NAME])
+            self._on_init_step_done()
+        else:
+            roi_worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
+            roi_worker.returned.connect(self._apply_roi_choices_update)
+            roi_worker.returned.connect(self._on_init_step_done)
+            roi_worker.start()
 
     def _on_init_step_done(self, *_):
         self._init_pending -= 1
@@ -251,8 +262,15 @@ class ROILoader(Container):
         Disables the Load button until the names have loaded.
         """
         if not self.ome_zarr_container:
-            self._apply_roi_choices_update([""])
+            self._apply_roi_choices_update([_NO_ROI_NAME])
             self.state = LoaderState.INITIALIZING
+            return
+
+        if self._roi_table_picker.value == _NO_ROI_TABLE:
+            self._apply_roi_choices_update([_NO_ROI_NAME])
+            if self._init_timer.isActive():
+                self._init_timer.stop()
+            self.state = LoaderState.READY
             return
 
         # 1) disable & debounce
@@ -377,6 +395,14 @@ class ROILoader(Container):
         if not self.ome_zarr_container:
             return
         rt, rn = self._roi_table_picker.value, self._roi_picker.value
+
+        if rt == _NO_ROI_TABLE:
+            # TODO: implement whole-image loading path
+            logger.info(
+                "No ROI table found in this image. "
+                "Whole-image loading is not yet implemented."
+            )
+            return
         channels = self._channel_picker.value
         level = self._level_picker.value
         labels = self._label_picker.value
@@ -419,7 +445,7 @@ class ROILoader(Container):
 class ROILoaderImage(ROILoader):
     def __init__(
         self,
-        viewer: "napari.Viewer",
+        viewer: napari.Viewer,
         zarr_url: str | None = None,
         token: str | None = None,
     ):
@@ -463,7 +489,7 @@ class ROILoaderImage(ROILoader):
 class ROILoaderPlate(ROILoader):
     def __init__(
         self,
-        viewer: "napari.Viewer",
+        viewer: napari.Viewer,
         plate_store: StoreOrGroup,
         row: str,
         col: str,
