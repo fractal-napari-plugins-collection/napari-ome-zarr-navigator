@@ -2,8 +2,12 @@ import os
 import shutil
 from pathlib import Path
 
+import pandas as pd
 import pooch
 import pytest
+from ngio import create_empty_plate, create_synthetic_ome_zarr
+from ngio.hcs._plate import OmeZarrPlate
+from ngio.tables import ConditionTable
 
 
 @pytest.fixture(scope="session")
@@ -61,3 +65,52 @@ def zenodo_zarr(testdata_path: Path) -> list[str]:
             shutil.rmtree(str(folder))
         shutil.copytree(Path(zarr_full_path) / file_name, folder)
     return [str(f) for f in folders]
+
+
+# ---------------------------------------------------------------------------
+# Synthetic OME-Zarr plate fixtures (no network, fast)
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_plate(plate_dir: Path) -> OmeZarrPlate:
+    """Create a 2-well (B/03, C/04) synthetic plate at *plate_dir*."""
+    plate = create_empty_plate(store=str(plate_dir), name="test_plate")
+    for row, col_str in [("B", "03"), ("C", "04")]:
+        image_dir = plate_dir / row / col_str / "0"
+        create_synthetic_ome_zarr(
+            store=str(image_dir),
+            shape=(1, 64, 64),
+            table_backend="csv",
+        )
+        plate.add_image(row=row, column=col_str, image_path="0")
+    return plate
+
+
+@pytest.fixture
+def synthetic_plate_path(tmp_path: Path) -> str:
+    """2-well synthetic plate (B03, C04) with no condition tables."""
+    plate_dir = tmp_path / "test_plate.zarr"
+    _build_synthetic_plate(plate_dir)
+    return str(plate_dir)
+
+
+@pytest.fixture
+def synthetic_plate_with_conditions_path(tmp_path: Path) -> str:
+    """2-well synthetic plate (B03, C04) with a plate-level condition table."""
+    plate_dir = tmp_path / "test_plate_cond.zarr"
+    plate = _build_synthetic_plate(plate_dir)
+    condition_df = pd.DataFrame(
+        {
+            "well": ["B03", "C04"],
+            "row": ["B", "C"],
+            "column": ["03", "04"],
+            "differentiation_timepoint": ["day 0", "day 6"],
+        }
+    )
+    plate.add_table(
+        name="differentiation_timepoint",
+        table=ConditionTable(condition_df),
+        backend="csv",
+        overwrite=True,
+    )
+    return str(plate_dir)
