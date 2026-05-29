@@ -159,6 +159,8 @@ class ImgBrowser(Container):
             self.btn_load_roi.enabled = False
 
     def _update_well_choices(self, wells: list) -> None:
+        with suppress(Exception):
+            self.well.choices = ()
         self.well.choices = wells
         self.well._default_choices = wells
 
