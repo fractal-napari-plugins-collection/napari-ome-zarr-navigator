@@ -92,4 +92,8 @@ class PlateManager:
                 wells.append(f"{row}{col}")
                 dfs.append(pd.DataFrame({"row": [row], "col": [col]}))
         wells_str = sorted(wells, key=well_sort_key)
+        if not dfs:
+            return wells_str, pd.DataFrame(
+                {"row": pd.Series(dtype=str), "col": pd.Series(dtype=str)}
+            )
         return wells_str, pd.concat(dfs, ignore_index=True)

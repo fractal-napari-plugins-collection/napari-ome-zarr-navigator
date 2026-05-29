@@ -120,7 +120,7 @@ class ConditionTableFilter:
     def init_image_condition_tables(self, zarr_plate) -> None:
         """Populate condition-table selector from image-level tables in the plate."""
         try:
-            tables = zarr_plate.list_image_tables(filter_types="condition_table")
+            tables = zarr_plate.list_image_tables(filter_types="condition")
         except NgioValueError:
             tables = []
         if tables:
@@ -143,7 +143,8 @@ class ConditionTableFilter:
             ).dataframe
         except NgioValueError:
             return None
-        return parse_condition_table(raw)
+        df = parse_condition_table(raw)
+        return df.drop(columns=["path_in_well"], errors="ignore")
 
     def _toggle_filter(self, i: int) -> Callable:
         def _toggle() -> None:
@@ -171,6 +172,6 @@ class ConditionTableFilter:
 
         and_filter = pd.concat(filter_conditions, axis=1).all(axis=1)
         tbl = self.df.loc[and_filter]
-        rowcol_set = set(zip(tbl["row"], tbl["col"], strict=True))
+        rowcol_set = {(r, int(c)) for r, c in zip(tbl["row"], tbl["col"], strict=True)}
         wells, _ = self._plate_mgr.get_plate_wells(filters=rowcol_set)
         self.signals.wells_changed.emit(wells)
