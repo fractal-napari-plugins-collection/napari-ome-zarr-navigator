@@ -17,7 +17,6 @@ from ngio.utils import (
     StoreOrGroup,
     fractal_fsspec_store,
 )
-from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
     ROILoaderSignals,
@@ -25,6 +24,7 @@ from napari_ome_zarr_navigator.roi_loading_utils import (
     remove_existing_label_layers,
 )
 from napari_ome_zarr_navigator.util import (
+    LoaderButtonController,
     LoaderState,
     NapariHandler,
     ZarrSelector,
@@ -54,12 +54,6 @@ class ROILoader(Container):
         # Used to identify the zarr image in the feature table
         self.zarr_id = ""
 
-        # Loading button variables
-        self._dots = 0
-        self._loading_timer = QTimer()  # type: ignore[call-arg]
-        self._loading_timer.setInterval(300)
-        self._loading_timer.timeout.connect(self._animate_loading)
-
         # Translation to move position of ROIs loaded
         self.translation = (0, 0)
         self.layer_base_name = ""
@@ -84,16 +78,8 @@ class ROILoader(Container):
 
         self.image_changed_event = ROILoaderSignals()
 
-        # Add timers for state changes
-        self._init_timer = QTimer()  # type: ignore[call-arg]
-        self._init_timer.setSingleShot(True)
-        self._init_timer.setInterval(150)
-        self._init_timer.timeout.connect(self._enter_initializing)
-
-        # State of the load button — _state starts as None; the setter call
-        # below immediately transitions it to INITIALIZING
-        self._state: LoaderState | None = None
-        self.state = LoaderState.INITIALIZING
+        self._btn_ctrl = LoaderButtonController(self._run_button)
+        self._btn_ctrl.set_state(LoaderState.INITIALIZING)
 
         # Initialize possible choices
         self.image_changed_event.image_changed.connect(self._start_initialization)
@@ -127,20 +113,11 @@ class ROILoader(Container):
 
     @property
     def state(self) -> LoaderState | None:
-        return self._state
+        return self._btn_ctrl.current_state
 
     @state.setter
     def state(self, new: LoaderState) -> None:
-        self._state = new
-        if new is LoaderState.INITIALIZING:
-            self._run_button.enabled = False
-            self._run_button.text = "Initializing"
-        elif new is LoaderState.READY:
-            self._run_button.enabled = True
-            self._run_button.text = "Load ROI"
-        elif new is LoaderState.LOADING:
-            self._run_button.enabled = False
-            self._run_button.text = "Loading"
+        self._btn_ctrl.set_state(new)
 
     def setup_logging(self):
         for handler in logger.root.handlers[:]:
@@ -157,29 +134,11 @@ class ROILoader(Container):
 
         logger.addHandler(napari_handler)
 
-    def _begin_init(self):
-        """Generic disable + debounce for any initializing step."""
-        self._run_button.enabled = False
-        # restart the 150 ms timer
-        if self._init_timer.isActive():
-            self._init_timer.stop()
-        self._init_timer.start()
-
     def _start_initialization(self, *_):
-        # 1) disable & schedule “Initializing” after 150 ms
-        self._begin_init()
+        # 3 steps: (1) ROI-tables list, (2) ROI-names (dependent on 1), (3) image-attrs
+        self._btn_ctrl.begin_init(n_steps=3)
 
-        # 2) schedule that, after 150 ms, if we're still not done,
-        #    switch text → “Initializing”
-        if self._init_timer.isActive():
-            self._init_timer.stop()
-        self._init_timer.start()
-
-        # We’ll have 3 “done” events:
-        # 1) ROI‐tables list, 2) ROI‐names list (dependent on 1), 3) image‐attrs
-        self._init_pending = 3
-
-        # (1) Start ROI‐tables lookup:
+        # (1) Start ROI-tables lookup:
         @thread_worker
         def _get_tables():
             return self.get_roi_tables()
@@ -188,9 +147,9 @@ class ROILoader(Container):
         tbl_worker.returned.connect(self._on_tables_ready)
         tbl_worker.start()
 
-        # (3) Kick off image‐attrs right away (synchronous), then mark done:
+        # (3) Kick off image-attrs right away (synchronous), then mark done:
         self.update_available_image_attrs(self.ome_zarr_container)
-        self._on_init_step_done()
+        self._btn_ctrl.on_step_done()
 
     def get_roi_tables(self) -> list[str]:
         """
@@ -216,34 +175,18 @@ class ROILoader(Container):
             return [_NO_ROI_TABLE]
 
     def _on_tables_ready(self, table_list):
-        # apply ROI‐tables dropdown
         self._apply_roi_table_choices_update(table_list)
-        # (1) done:
-        self._on_init_step_done()
+        self._btn_ctrl.on_step_done()  # step 1 done
 
-        # (2) now that tables are populated, fetch ROI‐names:
         if self._roi_table_picker.value == _NO_ROI_TABLE:
             # No ROI tables found — skip worker, use sentinel name
             self._apply_roi_choices_update([_NO_ROI_NAME])
-            self._on_init_step_done()
+            self._btn_ctrl.on_step_done()  # step 2 done
         else:
             roi_worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
             roi_worker.returned.connect(self._apply_roi_choices_update)
-            roi_worker.returned.connect(self._on_init_step_done)
+            roi_worker.returned.connect(self._btn_ctrl.on_step_done)  # step 2 done
             roi_worker.start()
-
-    def _on_init_step_done(self, *_):
-        self._init_pending -= 1
-        if self._init_pending == 0:
-            # cancel any pending button label‐change
-            if self._init_timer.isActive():
-                self._init_timer.stop()
-            self.state = LoaderState.READY
-
-    def _enter_initializing(self):
-        """Only flip the text after a delay to avoid flickering"""
-        if getattr(self, "_init_pending", 0) > 0:
-            self.state = LoaderState.INITIALIZING
 
     @thread_worker
     def _fetch_rois(self, table_name: str) -> list[str | None]:
@@ -268,25 +211,13 @@ class ROILoader(Container):
 
         if self._roi_table_picker.value == _NO_ROI_TABLE:
             self._apply_roi_choices_update([_NO_ROI_NAME])
-            if self._init_timer.isActive():
-                self._init_timer.stop()
             self.state = LoaderState.READY
             return
 
-        # 1) disable & debounce
-        self._begin_init()
-
-        # 2) fetch table names exactly like in _start_initialization
+        self._btn_ctrl.begin_init(n_steps=1)
         worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
         worker.returned.connect(self._apply_roi_choices_update)
-
-        # 3) when done, cancel timer + go ready
-        def _on_rois_returned(_):
-            if self._init_timer.isActive():
-                self._init_timer.stop()
-            self.state = LoaderState.READY
-
-        worker.returned.connect(_on_rois_returned)
+        worker.returned.connect(self._btn_ctrl.on_step_done)
         worker.start()
 
     def _apply_roi_choices_update(self, roi_list):
@@ -306,19 +237,9 @@ class ROILoader(Container):
         self.image_changed_event.roi_tables_updated.emit(table_list)
 
     def _on_state_change(self, new_state: LoaderState):
-        self._loading_timer.stop()
-        if new_state is LoaderState.LOADING:
-            self._dots = 0
-            self.state = LoaderState.LOADING
-            self._loading_timer.start()
-        else:
-            self.state = new_state
+        self._btn_ctrl.set_state(new_state)
         if new_state is LoaderState.READY:
             self.image_changed_event.load_finished.emit()
-
-    def _animate_loading(self):
-        self._dots = (self._dots + 1) % 4
-        self._run_button.text = "Loading" + "." * self._dots
 
     def update_available_image_attrs(self, new_zarr_img: ngio.OmeZarrContainer | None):
         if new_zarr_img is not None:

@@ -9,6 +9,7 @@ from magicgui.widgets import (
     FileEdit,
     Label,
     LineEdit,
+    PushButton,
     RadioButtons,
 )
 from napari.utils.notifications import show_info
@@ -217,3 +218,67 @@ class ZarrSelector(Container):
     @property
     def token(self) -> str | None:
         return self._http_token.value.strip() or None
+
+
+class LoaderButtonController:
+    """Manages a PushButton's text, enabled state, and loading/init animations.
+
+    Owns both QTimers so ROILoader doesn't need to touch them directly.
+    Call begin_init(n) before launching n async init steps, then on_step_done()
+    from each step's returned callback. set_state() handles LOADING animation.
+    """
+
+    def __init__(self, button: PushButton) -> None:
+        self._button = button
+        self._dots = 0
+        self._pending = 0
+        self.current_state: LoaderState | None = None
+
+        self._loading_timer = QTimer()  # type: ignore[call-arg]
+        self._loading_timer.setInterval(300)
+        self._loading_timer.timeout.connect(self._animate_loading)
+
+        self._init_timer = QTimer()  # type: ignore[call-arg]
+        self._init_timer.setSingleShot(True)
+        self._init_timer.setInterval(150)
+        self._init_timer.timeout.connect(self._show_initializing)
+
+    def set_state(self, new: LoaderState) -> None:
+        """Set button text/enabled and manage the loading dot animation."""
+        self._loading_timer.stop()
+        self.current_state = new
+        if new is LoaderState.INITIALIZING:
+            self._button.enabled = False
+            self._button.text = "Initializing"
+        elif new is LoaderState.READY:
+            self._button.enabled = True
+            self._button.text = "Load ROI"
+        elif new is LoaderState.LOADING:
+            self._button.enabled = False
+            self._button.text = "Loading"
+            self._dots = 0
+            self._loading_timer.start()
+
+    def begin_init(self, n_steps: int = 1) -> None:
+        """Disable button and restart the debounce timer for n pending steps."""
+        self._button.enabled = False
+        self._pending = n_steps
+        if self._init_timer.isActive():
+            self._init_timer.stop()
+        self._init_timer.start()
+
+    def on_step_done(self, *_) -> None:
+        """Call when one init step completes. Goes READY once all steps are done."""
+        self._pending = max(0, self._pending - 1)
+        if self._pending == 0:
+            if self._init_timer.isActive():
+                self._init_timer.stop()
+            self.set_state(LoaderState.READY)
+
+    def _show_initializing(self) -> None:
+        if self._pending > 0:
+            self.set_state(LoaderState.INITIALIZING)
+
+    def _animate_loading(self) -> None:
+        self._dots = (self._dots + 1) % 4
+        self._button.text = "Loading" + "." * self._dots
