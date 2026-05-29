@@ -9,6 +9,7 @@ import ngio.tables
 import numpy as np
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
+from napari.utils.notifications import show_info
 from qtpy.QtCore import QObject, Signal  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import (
@@ -197,6 +198,50 @@ def find_matching_label_layer_index(
     return labels.index(reference_label)
 
 
+def apply_roi_data_to_viewer(
+    viewer: napari.Viewer,
+    results: dict,
+    channels: list[str],
+    base_name: str,
+    blending_int: str | None = None,
+    set_state_fn: Callable | None = None,
+) -> None:
+    """Add pre-fetched ROI data to the napari viewer.
+
+    Args:
+        viewer: napari viewer to add layers to
+        results: dict with keys "images" (list of add_image kwargs) and
+            "lbl_feats" (dict with "labels" and "features" lists)
+        channels: ordered list of channel names — determines layer add order
+        base_name: layer name prefix used to match images by name
+        blending_int: blending mode for the first intensity channel
+        set_state_fn: optional callable to restore button state to READY
+    """
+    # add intensity images in user-selected order
+    for i, ch in enumerate(channels):
+        blending = blending_int if i == 0 else "additive"
+        name = f"{base_name}{ch}"
+        kw = next(
+            (item for item in results["images"] if item and item["name"] == name),
+            None,
+        )
+        if kw is None:
+            # worker returned None (empty/all-zero ROI) — skip this channel
+            continue
+        viewer.add_image(**kw, blending=blending)
+
+    # add labels
+    for kw in results["lbl_feats"]["labels"]:
+        viewer.add_labels(**kw)
+
+    # attach feature tables
+    for feat in results["lbl_feats"]["features"]:
+        viewer.layers[feat["layer_name"]].features = feat["df"]
+
+    if set_state_fn is not None:
+        set_state_fn(LoaderState.READY)
+
+
 def orchestrate_load_roi(
     ome_zarr_container: ngio.OmeZarrContainer,
     viewer: napari.Viewer,
@@ -248,37 +293,37 @@ def orchestrate_load_roi(
         set_state_fn(LoaderState.LOADING)
 
     results = {"images": [], "lbl_feats": None}
+    total_workers = len(channels) + 1  # one per channel + one for labels/features
+    finished_count = {"value": 0}
 
     if roi_table == "well_ROI_table" or roi_table == "image_ROI_table":
-        base_name = f"{layer_base_name}"
+        base_name = layer_base_name
     else:
         base_name = f"{layer_base_name}{roi_name}_"
 
-    def try_finalize():
-        # wait until images for all channels + lbl_feats present
-        if len(results["images"]) != len(channels) or results["lbl_feats"] is None:
+    def worker_done() -> None:
+        finished_count["value"] += 1
+        if finished_count["value"] < total_workers:
             return
+        # All workers finished (some may have errored) — apply whatever loaded.
+        if results["lbl_feats"] is None:
+            results["lbl_feats"] = {"labels": [], "features": []}
+        apply_roi_data_to_viewer(
+            viewer, results, channels, base_name, blending_int, set_state_fn
+        )
 
-        # add intensity images in user‐selected order
-        for i, ch in enumerate(channels):
-            blending = blending_int if i == 0 else "additive"
-            name = f"{base_name}{ch}"
-            kw = next(
-                item for item in results["images"] if item and item["name"] == name
-            )
-            viewer.add_image(**kw, blending=blending)
+    def make_channel_error_handler(ch_name: str) -> Callable[[BaseException], None]:
+        def on_error(exc: BaseException) -> None:
+            logger.error("Channel '%s' load failed: %s", ch_name, exc, exc_info=exc)
+            show_info(f"Failed to load channel '{ch_name}': {exc}")
+            worker_done()
 
-        # add labels
-        for kw in results["lbl_feats"]["labels"]:
-            viewer.add_labels(**kw)
+        return on_error
 
-        # attach feature tables
-        for feat in results["lbl_feats"]["features"]:
-            viewer.layers[feat["layer_name"]].features = feat["df"]
-
-        # back to READY
-        if set_state_fn is not None:
-            set_state_fn(LoaderState.READY)
+    def on_labels_error(exc: BaseException) -> None:
+        logger.error("Labels/features load failed: %s", exc, exc_info=exc)
+        show_info(f"Failed to load labels/features: {exc}")
+        worker_done()
 
     # 2) launch one worker per channel
     for ch in channels:
@@ -293,8 +338,9 @@ def orchestrate_load_roi(
             lazy=lazy,
         )
         w.returned.connect(
-            lambda img_kw: (results["images"].append(img_kw), try_finalize())
+            lambda img_kw: (results["images"].append(img_kw), worker_done())
         )
+        w.errored.connect(make_channel_error_handler(ch))
         w.start()
 
     # 3) launch labels+features worker
@@ -311,8 +357,9 @@ def orchestrate_load_roi(
         zarr_id=zarr_id,
     )
     w2.returned.connect(
-        lambda lf: (results.__setitem__("lbl_feats", lf), try_finalize())
+        lambda lf: (results.__setitem__("lbl_feats", lf), worker_done())
     )
+    w2.errored.connect(on_labels_error)
     w2.start()
 
 
