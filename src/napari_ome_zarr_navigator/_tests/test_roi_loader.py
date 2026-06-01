@@ -41,11 +41,11 @@ def test_plate(make_napari_viewer, zenodo_zarr, qtbot):
     assert roi_loader._zarr_picker.choices == ("0",)
     assert roi_loader._zarr_picker.value == "0"
 
-    # Set parameters
+    # Set parameters (level picker now shows resolution strings; default Multi-resolution
+    # mode means run() uses dask pyramid regardless of level picker value)
     roi_loader._roi_table_picker.value = "FOV_ROI_table"
     roi_loader._roi_picker.value = "FOV_1"
     roi_loader._channel_picker.value = ["DAPI"]
-    roi_loader._level_picker.value = "0"
     roi_loader._label_picker.value = ["nuclei"]
     roi_loader._feature_picker.value = ["measurements"]
     roi_loader._remove_old_labels_box.value = False
@@ -81,16 +81,17 @@ def test_roi_loader(make_napari_viewer, zenodo_zarr, qtbot):
     assert roi_loader._roi_table_picker.value == "FOV_ROI_table"
     assert roi_loader._roi_picker.value == "FOV_1"
     assert roi_loader._channel_picker.choices == ("DAPI", "nanog", "Lamin B1")
-    assert roi_loader._level_picker.value == "0"
+    # Level picker now shows physical resolution strings (e.g. "0.163 micrometer")
+    assert roi_loader._level_picker.value is not None
+    assert roi_loader._level_picker.value == roi_loader._level_picker.choices[0]
     assert roi_loader._label_picker.choices == ("nuclei",)
     assert roi_loader._feature_picker.choices == ("measurements", "measurements_csv")
     assert not roi_loader._remove_old_labels_box.value
 
-    # Set parameters
+    # Set parameters (level picker is disabled in default Multi-resolution mode)
     roi_loader._roi_table_picker.value = "FOV_ROI_table"
     roi_loader._roi_picker.value = "FOV_1"
     roi_loader._channel_picker.value = ["DAPI"]
-    roi_loader._level_picker.value = "0"
     roi_loader._label_picker.value = ["nuclei"]
     roi_loader._feature_picker.value = ["measurements"]
     roi_loader._remove_old_labels_box.value = False

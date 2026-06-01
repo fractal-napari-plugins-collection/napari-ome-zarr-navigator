@@ -39,6 +39,9 @@ logger.setLevel(logging.INFO)
 _NO_ROI_TABLE = "(none — load whole image)"
 _NO_ROI_NAME = "(whole image)"
 
+_MODE_MULTISCALE = "Multi-resolution (lazy)"
+_MODE_FIXED = "Fixed resolution"
+
 
 class ROILoader(Container):
     def __init__(
@@ -58,21 +61,51 @@ class ROILoader(Container):
         self.translation = (0, 0)
         self.layer_base_name = ""
 
+        # Resolution maps: display string → ngio level path
+        self._image_res_map: dict[str, str] = {}
+        self._label_res_map: dict[str, str] = {}
+
         self._roi_table_picker = ComboBox(label="ROI Table")
         self._roi_picker = ComboBox(label="ROI")
         self._channel_picker = Select(
             label="Channels",
         )
-        self._level_picker = ComboBox(label="Image Level")
+        self._image_loading_mode = ComboBox(
+            label="Image loading",
+            choices=[_MODE_MULTISCALE, _MODE_FIXED],
+            value=_MODE_MULTISCALE,
+        )
+        self._label_loading_mode = ComboBox(
+            label="Label loading",
+            choices=[_MODE_FIXED, _MODE_MULTISCALE],
+            value=_MODE_FIXED,
+        )
         self._label_picker = Select(
             label="Labels",
         )
         self._feature_picker = Select(
             label="Features",
         )
+
+        # Advanced settings (collapsed by default)
+        self._level_picker = ComboBox(label="Image resolution")
+        self._level_picker.enabled = False  # disabled in default Multi-resolution mode
+        self._label_level_picker = ComboBox(label="Label resolution")
         self._remove_old_labels_box = CheckBox(
             value=False, text="Remove existing labels"
         )
+        self._advanced_toggle = PushButton(text="▶ Advanced settings")
+        self._advanced_container = Container(
+            widgets=[
+                self._image_loading_mode,
+                self._level_picker,
+                self._label_loading_mode,
+                self._label_level_picker,
+                self._remove_old_labels_box,
+            ],
+        )
+        self._advanced_container.visible = False
+
         self._run_button = PushButton(value=False, text="Load ROI")
         self._ome_zarr_container: ngio.OmeZarrContainer | None = None
 
@@ -81,25 +114,49 @@ class ROILoader(Container):
         self._btn_ctrl = LoaderButtonController(self._run_button)
         self._btn_ctrl.set_state(LoaderState.INITIALIZING)
 
-        # Initialize possible choices
+        # Wire up events
         self.image_changed_event.image_changed.connect(self._start_initialization)
         self._roi_table_picker.changed.connect(self.update_roi_selection)
+        self._image_loading_mode.changed.connect(self._on_image_mode_changed)
+        self._label_loading_mode.changed.connect(self._on_label_mode_changed)
+        self._advanced_toggle.clicked.connect(self._toggle_advanced)
         self._run_button.clicked.connect(self.run)
 
         widgets = [
             self._roi_table_picker,
             self._roi_picker,
-            self._level_picker,
             self._channel_picker,
             self._label_picker,
             self._feature_picker,
-            self._remove_old_labels_box,
+            self._advanced_toggle,
+            self._advanced_container,
             self._run_button,
         ]
         if extra_widgets:
             widgets = extra_widgets + widgets
 
         super().__init__(widgets=widgets)
+
+    # ------------------------------------------------------------------
+    # Advanced settings toggle
+    # ------------------------------------------------------------------
+
+    def _toggle_advanced(self):
+        vis = not self._advanced_container.visible
+        self._advanced_container.visible = vis
+        self._advanced_toggle.text = (
+            "▼ Advanced settings" if vis else "▶ Advanced settings"
+        )
+
+    def _on_image_mode_changed(self):
+        self._level_picker.enabled = self._image_loading_mode.value == _MODE_FIXED
+
+    def _on_label_mode_changed(self):
+        self._label_level_picker.enabled = self._label_loading_mode.value == _MODE_FIXED
+
+    # ------------------------------------------------------------------
+    # Container / state properties
+    # ------------------------------------------------------------------
 
     @property
     def ome_zarr_container(self):
@@ -122,17 +179,13 @@ class ROILoader(Container):
     def setup_logging(self):
         for handler in logger.root.handlers[:]:
             logging.root.removeHandler(handler)
-        # Create a custom handler for napari
         napari_handler = NapariHandler()
         napari_handler.setLevel(logging.INFO)
-
-        # Optionally, set a formatter for the handler
-        # formatter = logging.Formatter(
-        #     '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        # )
-        # napari_handler.setFormatter(formatter)
-
         logger.addHandler(napari_handler)
+
+    # ------------------------------------------------------------------
+    # Initialization sequence
+    # ------------------------------------------------------------------
 
     def _start_initialization(self, *_):
         # 3 steps: (1) ROI-tables list, (2) ROI-names (dependent on 1), (3) image-attrs
@@ -161,8 +214,6 @@ class ROILoader(Container):
         empty string.
         """
         if self.ome_zarr_container is not None:
-            # Use custom listing of ROI tables to ensure masking ROI tables
-            # come last in the list (to avoid )
             roi = self.ome_zarr_container.list_tables(
                 filter_types="roi_table",
             )
@@ -179,7 +230,6 @@ class ROILoader(Container):
         self._btn_ctrl.on_step_done()  # step 1 done
 
         if self._roi_table_picker.value == _NO_ROI_TABLE:
-            # No ROI tables found — skip worker, use sentinel name
             self._apply_roi_choices_update([_NO_ROI_NAME])
             self._btn_ctrl.on_step_done()  # step 2 done
         else:
@@ -190,9 +240,7 @@ class ROILoader(Container):
 
     @thread_worker
     def _fetch_rois(self, table_name: str) -> list[str | None]:
-        """
-        Worker that returns the list of ROI names for the given table.
-        """
+        """Worker that returns the list of ROI names for the given table."""
         if self.ome_zarr_container is not None:
             ngio_table = self.ome_zarr_container.get_generic_roi_table(name=table_name)
             return [r.name for r in ngio_table.rois()]
@@ -200,10 +248,7 @@ class ROILoader(Container):
             return [""]
 
     def update_roi_selection(self):
-        """
-        Called when the user picks a new ROI table.
-        Disables the Load button until the names have loaded.
-        """
+        """Called when the user picks a new ROI table."""
         if not self.ome_zarr_container:
             self._apply_roi_choices_update([_NO_ROI_NAME])
             self.state = LoaderState.INITIALIZING
@@ -221,17 +266,11 @@ class ROILoader(Container):
         worker.start()
 
     def _apply_roi_choices_update(self, roi_list):
-        """
-        Update the list of available ROIs in the dropdown
-        """
         self._roi_picker.choices = roi_list
         self._roi_picker._default_choices = roi_list
         self.image_changed_event.roi_choices_updated.emit(roi_list)
 
     def _apply_roi_table_choices_update(self, table_list):
-        """
-        Update the list of available ROI tables in the dropdown menu
-        """
         self._roi_table_picker.choices = table_list
         self._roi_table_picker._default_choices = table_list
         self.image_changed_event.roi_tables_updated.emit(table_list)
@@ -241,58 +280,123 @@ class ROILoader(Container):
         if new_state is LoaderState.READY:
             self.image_changed_event.load_finished.emit()
 
+    # ------------------------------------------------------------------
+    # Image attributes & resolution maps
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_res_map(
+        level_paths: list[str],
+        get_fn,
+    ) -> tuple[list[str], dict[str, str]]:
+        """Build (res_strings, {res_str: level_path}) from ngio pixel_size metadata."""
+        res_map: dict[str, str] = {}
+        res_strings: list[str] = []
+        for lv in level_paths:
+            obj = get_fn(lv)
+            ps = obj.pixel_size
+            unit = ps.space_unit or "µm"
+            s = f"{ps.x:.3g} {unit}"
+            res_map[s] = lv
+            res_strings.append(s)
+        return res_strings, res_map
+
     def update_available_image_attrs(self, new_zarr_img: ngio.OmeZarrContainer | None):
         if new_zarr_img is not None:
             channels = new_zarr_img.channel_labels
-            levels = sorted(new_zarr_img.level_paths)
+            level_paths = new_zarr_img.level_paths  # ngio order: finest→coarsest
             try:
                 labels = new_zarr_img.list_labels()
             except NgioValidationError:
                 labels = []
-            # ngio version now strictly only loads feature tables
             try:
                 features = new_zarr_img.tables_container.list(
                     filter_types="feature_table"
                 )
             except NgioValidationError:
                 features = []
-            self.set_available_image_attrs(channels, levels, labels, features)
-        else:
-            # If zarr image was set to None, reset all selectors
-            self.set_available_image_attrs([""], [""], [""], [""])
 
-    def set_available_image_attrs(self, channels, levels, labels, features):
+            # Build image resolution display strings
+            image_res_strings, image_res_map = self._build_res_map(
+                level_paths, lambda lv: new_zarr_img.get_image(path=lv)
+            )
+
+            # Build label resolution display strings from the first label
+            if labels:
+                first_lbl = labels[0]
+                lbl_sample = new_zarr_img.get_label(name=first_lbl, path=level_paths[0])
+                lbl_paths = lbl_sample.meta.paths  # finest→coarsest via ngio meta
+                label_res_strings, label_res_map = self._build_res_map(
+                    lbl_paths,
+                    lambda lv: new_zarr_img.get_label(name=first_lbl, path=lv),
+                )
+            else:
+                label_res_strings, label_res_map = image_res_strings, image_res_map
+
+            self.set_available_image_attrs(
+                channels,
+                image_res_strings,
+                image_res_map,
+                label_res_strings,
+                label_res_map,
+                labels,
+                features,
+            )
+        else:
+            self.set_available_image_attrs([], [], {}, [], {}, [], [])
+
+    def set_available_image_attrs(
+        self,
+        channels: list[str],
+        image_res_strings: list[str],
+        image_res_map: dict[str, str],
+        label_res_strings: list[str],
+        label_res_map: dict[str, str],
+        labels: list[str],
+        features: list[str],
+    ):
+        self._image_res_map = image_res_map
+        self._label_res_map = label_res_map
+
         self._channel_picker.choices = channels
         self._channel_picker._default_choices = channels
-        # Set pyramid levels
-        self._level_picker.choices = levels
-        self._level_picker._default_choices = levels
 
-        # Initialize available label images
+        self._level_picker.choices = image_res_strings
+        self._level_picker._default_choices = image_res_strings
+
+        self._label_level_picker.choices = label_res_strings
+        self._label_level_picker._default_choices = label_res_strings
+        # Default to finest resolution (first in ngio's ordered list)
+        if label_res_strings:
+            self._label_level_picker.value = label_res_strings[0]
+
         self._label_picker.choices = labels
         self._label_picker._default_choices = labels
 
-        # Initialize available features
         self._feature_picker.choices = features
         self._feature_picker._default_choices = features
 
     def reset_widgets(self):
         """Clear out all dropdowns & go back to an uninitialized state."""
-        # ROI tables + names
         for picker in (self._roi_table_picker, self._roi_picker):
             picker.choices = []
             picker._default_choices = []
-        # channels, levels, labels, features
         for picker in (
             self._channel_picker,
             self._level_picker,
+            self._label_level_picker,
             self._label_picker,
             self._feature_picker,
         ):
             picker.choices = []
             picker._default_choices = []
-        # and disable the run button
+        self._image_res_map = {}
+        self._label_res_map = {}
         self.state = LoaderState.INITIALIZING
+
+    # ------------------------------------------------------------------
+    # Load
+    # ------------------------------------------------------------------
 
     @thread_worker
     def _load_container(self, store):
@@ -304,7 +408,6 @@ class ROILoader(Container):
             return None
 
     def _on_image_container_ready(self, container):
-        # on main thread, assign and kick off your init sequence
         self.ome_zarr_container = container
 
     def _on_image_container_error(self, exc: Exception):
@@ -325,10 +428,21 @@ class ROILoader(Container):
             )
             return
         channels = self._channel_picker.value
-        level = self._level_picker.value
         labels = self._label_picker.value
         features = self._feature_picker.value
         translation = self.translation
+
+        multiscale_image = self._image_loading_mode.value == _MODE_MULTISCALE
+        multiscale_labels = self._label_loading_mode.value == _MODE_MULTISCALE
+
+        # Resolve display strings to ngio level paths
+        level_str = self._level_picker.value
+        label_level_str = self._label_level_picker.value
+        if level_str is None or label_level_str is None:
+            logger.info("Image or label level not set; cannot load ROI")
+            return
+        level = self._image_res_map.get(level_str, level_str)
+        label_level = self._label_res_map.get(label_level_str, label_level_str)
 
         if len(channels) < 1 and len(labels) < 1:
             logger.info(
@@ -353,13 +467,16 @@ class ROILoader(Container):
             roi_table=rt,
             roi_name=rn,
             layer_base_name=self.layer_base_name,
-            level=level,
+            level=level,  # type: ignore[arg-type]  # dict.get(str, str) → str
             channels=channels,
             labels=labels,
             features=features,
             translation=translation,
             set_state_fn=self._on_state_change,
             zarr_id=self.zarr_id,
+            multiscale_image=multiscale_image,
+            multiscale_labels=multiscale_labels,
+            label_level=label_level,  # type: ignore[arg-type]
         )
 
 
@@ -379,7 +496,6 @@ class ROILoaderImage(ROILoader):
 
         self.zarr_selector.on_change(self.update_image_selection)
 
-        # Set initial value if provided
         if zarr_url:
             if token:
                 self.zarr_selector.set_url(zarr_url, token=token)
@@ -439,14 +555,9 @@ class ROILoaderPlate(ROILoader):
 
         self._run_button.clicked.connect(self._update_defaults)
 
-        # Calculate base translation for a given well
         self.translation, _ = calculate_well_positions(
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
-
-        # # Handle defaults for plate loading
-        # if "well_ROI_table" in self._roi_table_picker.choices:
-        #     self._roi_table_picker.value = "well_ROI_table"
 
     def get_available_ome_zarr_images(self):
         well = self.plate.get_well(row=self.row, column=self.col)
@@ -465,13 +576,22 @@ class ROILoaderPlate(ROILoader):
 
     def _update_defaults(self):
         "Updates Plate Browser defaults when ROIs are loaded"
+        level = self._image_res_map.get(
+            self._level_picker.value, self._level_picker.value
+        )
+        label_level = self._label_res_map.get(
+            self._label_level_picker.value, self._label_level_picker.value
+        )
         self.plate_browser.update_defaults(
             zarr_image_subgroup=self._zarr_picker.value,
             roi_table=self._roi_table_picker.value,
             roi_name=self._roi_picker.value,
             channels=self._channel_picker.value,
-            level=self._level_picker.value,
+            level=level,
             labels=self._label_picker.value,
             features=self._feature_picker.value,
             remove_old_labels=self._remove_old_labels_box.value,
+            image_loading_mode=self._image_loading_mode.value,
+            label_loading_mode=self._label_loading_mode.value,
+            label_level=label_level,
         )

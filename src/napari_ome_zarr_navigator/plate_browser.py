@@ -71,6 +71,9 @@ class PlateBrowser(Container):
         self.default_labels = None
         self.default_features = None
         self.remove_old_labels = False
+        self.default_image_loading_mode = "Multi-resolution (lazy)"
+        self.default_label_loading_mode = "Fixed resolution"
+        self.default_label_level = "0"
         self._cond_filter = ConditionTableFilter(self._plate_mgr)
 
         self._default_btn_ctrl = LoaderButtonController(
@@ -169,10 +172,14 @@ class PlateBrowser(Container):
             self._cond_filter.filter_container.visible = False
 
     def get_zarr_url(self):
-        # When the user adds new image layers, check if they have zarr_urls in
-        # the path or have a sample_path. If so, update the plugin with it.
+        # Only auto-populate the URL from layers explicitly loaded by
+        # napari-ome-zarr. All other sources (our ROI loader, raw arrays,
+        # other plugins) are ignored to prevent overwriting the plate URL or
+        # losing the HTTP token.
         active = self.viewer.layers.selection.active
         if active and active.as_layer_data_tuple()[-1] == "image":
+            if active.source.reader_plugin != "napari-ome-zarr":
+                return
             path = active.source.path
             if path and path != self._zarr_selector.url:
                 self._zarr_selector.set_url(path)
@@ -245,14 +252,20 @@ class PlateBrowser(Container):
                 roi_table=self.default_roi_table,
                 roi_name=self.default_roi_name,
                 layer_base_name=layer_base_name,
-                level=self.default_level,
+                level=self.default_level,  # type: ignore[arg-type]  # asserted non-None above
                 channels=self.default_channels,
                 labels=self.default_labels,
                 features=self.default_features,
                 translation=tuple(translation),  # type: ignore[arg-type]
                 set_state_fn=self._default_btn_ctrl.set_state,
-                lazy=False,
                 zarr_id=zarr_url,
+                multiscale_image=(
+                    self.default_image_loading_mode == "Multi-resolution (lazy)"
+                ),
+                multiscale_labels=(
+                    self.default_label_loading_mode == "Multi-resolution (lazy)"
+                ),
+                label_level=self.default_label_level,
             )
 
     def go_to_well(self):
@@ -315,6 +328,9 @@ class PlateBrowser(Container):
         labels,
         features,
         remove_old_labels,
+        image_loading_mode="Multi-resolution (lazy)",
+        label_loading_mode="Fixed resolution",
+        label_level="0",
     ):
         self.default_zarr_image_subgroup = zarr_image_subgroup
         self.default_roi_table = roi_table
@@ -324,4 +340,7 @@ class PlateBrowser(Container):
         self.default_labels = labels
         self.default_features = features
         self.remove_old_labels = remove_old_labels
+        self.default_image_loading_mode = image_loading_mode
+        self.default_label_loading_mode = label_loading_mode
+        self.default_label_level = label_level
         self.btn_load_default_roi.enabled = True

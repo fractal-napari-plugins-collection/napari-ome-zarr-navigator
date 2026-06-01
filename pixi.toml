@@ -15,8 +15,8 @@ pandas = "<3"
 napari-ome-zarr-navigator = { path = ".", editable = true, extras = ["testing"] }
 
 [feature.local-dev.pypi-dependencies]
-napari-feature-classifier = "*"
-napari-feature-visualization = "*"
+napari-feature-classifier = ">=0.4.3,<0.5"
+napari-feature-visualization = ">=0.1.0,<0.2"
 ipykernel = "*"
 
 [environments]
