@@ -48,48 +48,52 @@ def fetch_single_image(
     level: str,
     channel: str,
     translation: tuple[int, int],
-    lazy: bool = False,
     multiscale: bool = False,
+    whole_image: bool = False,
 ):
-    """Load exactly one channel's ROI and return kwargs for viewer.add_image.
+    """Load exactly one channel and return kwargs for viewer.add_image.
 
+    When whole_image=True, loads the full image array (no ROI cropping).
     When multiscale=True, returns a list of dask arrays (finest→coarsest) for
-    napari's multiscale rendering. When False, returns a single numpy array at
-    the specified level.
+    napari's multiscale rendering. When False, returns a numpy array at level.
     """
-    # TODO: Refactor ROI table loading to happen before the parallelized fetch
-    ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
-    curr_roi = ngio_table.get(roi_name)
-    roi_translation = (
-        translation[0] + curr_roi["y"].start,  # type: ignore[index]
-        translation[1] + curr_roi["x"].start,  # type: ignore[index]
-    )
+    if whole_image:
+        roi_translation = translation
+    else:
+        # TODO: Refactor ROI table loading to happen before the parallelized fetch
+        ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
+        curr_roi = ngio_table.get(roi_name)
+        roi_translation = (
+            translation[0] + curr_roi["y"].start,  # type: ignore[index]
+            translation[1] + curr_roi["x"].start,  # type: ignore[index]
+        )
 
     if multiscale:
         level_paths = ome_zarr_container.level_paths  # ngio order: finest→coarsest
         data = []
         for lv in level_paths:
             ngio_img = ome_zarr_container.get_image(path=lv)
-            arr = ngio_img.get_roi_as_dask(
-                roi=curr_roi, channel_selection=channel
-            ).squeeze()  # type: ignore[attr-defined]
+            if whole_image:
+                arr = ngio_img.get_as_dask(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
+            else:
+                arr = ngio_img.get_roi_as_dask(
+                    roi=curr_roi, channel_selection=channel
+                ).squeeze()  # type: ignore[attr-defined]
             data.append(arr)
         ngio_img0 = ome_zarr_container.get_image(path=level_paths[0])
         scale = _compute_scale(ngio_img0, data[0].ndim)
-        if not np.any(data[0]):
+        if not whole_image and not np.any(data[0]):
             return None
     else:
         ngio_img = ome_zarr_container.get_image(path=level)
-        if lazy:
-            arr = ngio_img.get_roi_as_dask(
-                roi=curr_roi, channel_selection=channel
-            ).squeeze()  # type: ignore[attr-defined]
+        if whole_image:
+            arr = ngio_img.get_as_numpy(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
         else:
             arr = ngio_img.get_roi_as_numpy(
                 roi=curr_roi, channel_selection=channel
             ).squeeze()  # type: ignore[attr-defined]
-        if not np.any(arr):
-            return None
+            if not np.any(arr):
+                return None
         data = arr
         scale = _compute_scale(ngio_img, arr.ndim)
 
@@ -127,25 +131,29 @@ def fetch_labels_and_features(
     labels: list[str],
     features: list[str],
     translation: tuple[int, int],
-    lazy: bool = False,
     zarr_id: str = "",
     multiscale_labels: bool = False,
     label_level: str = "0",
+    whole_image: bool = False,
 ):
     """
-    Load all label masks + feature tables for one ROI.
+    Load all label masks + feature tables for one ROI (or the whole image).
     Returns a dict with keys "labels" (a list of args for add_labels)
     and "features" (a list of {layer_name, df} to attach).
 
+    When whole_image=True, loads the full label array without ROI cropping.
     When multiscale_labels=True, label data is a list of dask arrays
     (finest→coarsest). When False, loads a numpy array at label_level.
     """
-    ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
-    curr_roi = ngio_table.get(roi_name)
-    roi_translation = (
-        translation[0] + curr_roi["y"].start,  # type: ignore[index]
-        translation[1] + curr_roi["x"].start,  # type: ignore[index]
-    )
+    if whole_image:
+        roi_translation = translation
+    else:
+        ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
+        curr_roi = ngio_table.get(roi_name)
+        roi_translation = (
+            translation[0] + curr_roi["y"].start,  # type: ignore[index]
+            translation[1] + curr_roi["x"].start,  # type: ignore[index]
+        )
 
     result = {"labels": [], "features": []}
 
@@ -157,14 +165,17 @@ def fetch_labels_and_features(
             data = []
             for lv in level_paths:
                 ngio_lbl = ome_zarr_container.get_label(name=lbl, path=lv)
-                arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
+                if whole_image:
+                    arr = ngio_lbl.get_as_dask().squeeze()  # type: ignore[attr-defined]
+                else:
+                    arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
                 data.append(arr)
             ngio_lbl0 = ome_zarr_container.get_label(name=lbl, path=level_paths[0])
             scale = _compute_scale(ngio_lbl0, data[0].ndim)
         else:
             ngio_lbl = ome_zarr_container.get_label(name=lbl, path=label_level)
-            if lazy:
-                arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
+            if whole_image:
+                arr = ngio_lbl.get_as_numpy().squeeze()  # type: ignore[attr-defined]
             else:
                 arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
             data = arr
@@ -291,11 +302,11 @@ def orchestrate_load_roi(
     translation: tuple[int, int],
     blending_int: str | None = None,
     set_state_fn: Callable | None = None,
-    lazy: bool = False,
     zarr_id: str = "",
     multiscale_image: bool = False,
     multiscale_labels: bool = False,
     label_level: str = "0",
+    whole_image: bool = False,
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -320,7 +331,6 @@ def orchestrate_load_roi(
         set_state_fn: is a callable that can be used to update button states.
             Needs to support set_state_fn(LoaderState.LOADING or READY) if
             provided.
-        lazy: Whether to use dask for lazy loading in fixed-resolution mode.
         zarr_id: A unique identifier for the OME-Zarr image that features get
             loaded from. The zarr_id is used as a column for the features that
             allows a user to map back the features to a given OME-Zarr. Also
@@ -330,6 +340,7 @@ def orchestrate_load_roi(
         multiscale_labels: When True, load labels as a dask pyramid. When
             False, load labels at `label_level` as a numpy array.
         label_level: Level path for fixed-resolution label loading (e.g. "0").
+        whole_image: When True, skip ROI cropping and load the full image/labels.
 
     """
     # 1) disable & show "Loading"
@@ -340,7 +351,7 @@ def orchestrate_load_roi(
     total_workers = len(channels) + 1  # one per channel + one for labels/features
     finished_count = {"value": 0}
 
-    if roi_table == "well_ROI_table" or roi_table == "image_ROI_table":
+    if whole_image or roi_table == "well_ROI_table" or roi_table == "image_ROI_table":
         base_name = layer_base_name
     else:
         base_name = f"{layer_base_name}{roi_name}_"
@@ -379,8 +390,8 @@ def orchestrate_load_roi(
             level,
             ch,
             translation,
-            lazy=lazy,
             multiscale=multiscale_image,
+            whole_image=whole_image,
         )
         w.returned.connect(
             lambda img_kw: (results["images"].append(img_kw), worker_done())
@@ -398,10 +409,10 @@ def orchestrate_load_roi(
         labels,
         features,
         translation,
-        lazy=lazy,
         zarr_id=zarr_id,
         multiscale_labels=multiscale_labels,
         label_level=label_level,
+        whole_image=whole_image,
     )
     w2.returned.connect(
         lambda lf: (results.__setitem__("lbl_feats", lf), worker_done())

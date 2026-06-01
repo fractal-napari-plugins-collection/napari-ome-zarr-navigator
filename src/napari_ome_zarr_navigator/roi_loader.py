@@ -420,13 +420,7 @@ class ROILoader(Container):
             return
         rt, rn = self._roi_table_picker.value, self._roi_picker.value
 
-        if rt == _NO_ROI_TABLE:
-            # TODO: implement whole-image loading path
-            logger.info(
-                "No ROI table found in this image. "
-                "Whole-image loading is not yet implemented."
-            )
-            return
+        whole_image = rt == _NO_ROI_TABLE
         channels = self._channel_picker.value
         labels = self._label_picker.value
         features = self._feature_picker.value
@@ -477,6 +471,7 @@ class ROILoader(Container):
             multiscale_image=multiscale_image,
             multiscale_labels=multiscale_labels,
             label_level=label_level,  # type: ignore[arg-type]
+            whole_image=whole_image,
         )
 
 
