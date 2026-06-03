@@ -14,13 +14,13 @@ pandas = "<3"
 [pypi-dependencies]
 napari-ome-zarr-navigator = { path = ".", editable = true, extras = ["testing"] }
 
-[feature.local-dev.pypi-dependencies]
+[feature.napari-fractal.pypi-dependencies]
 napari-feature-classifier = ">=0.4.3,<0.5"
 napari-feature-visualization = ">=0.1.0,<0.2"
 ipykernel = "*"
 
 [environments]
-local-dev = ["local-dev"]
+napari-fractal = ["napari-fractal"]
 
 [tasks]
 test = "pytest -v --color=yes --cov=napari_ome_zarr_navigator --cov-report=xml"
@@ -30,6 +30,6 @@ format = "ruff format src"
 typecheck = "pyright src"
 check = { depends-on = ["lint", "typecheck", "test"] }
 
-[tasks.napari-local]
+[tasks.napari-fractal]
 cmd = "napari"
-default-environment = "local-dev"
+default-environment = "napari-fractal"

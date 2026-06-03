@@ -51,9 +51,6 @@ class ROILoader(Container):
     ):
         self._viewer = viewer
         self.setup_logging()
-        self.channel_dict = {}
-        self.channel_names_dict = {}
-        self.labels_dict = {}
         # Used to identify the zarr image in the feature table
         self.zarr_id = ""
 
@@ -221,7 +218,7 @@ class ROILoader(Container):
                 filter_types="masking_roi_table",
             )
             tables = roi + masking_roi
-            return tables if tables else [_NO_ROI_TABLE]
+            return tables + [_NO_ROI_TABLE]
         else:
             return [_NO_ROI_TABLE]
 

@@ -40,7 +40,6 @@ class PlateBrowser(Container):
         self.viewer = viewer
         self._zarr_selector = ZarrSelector()
         self._plate_mgr = PlateManager(self._zarr_selector)
-        self.filters = []
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
         self.select_well = PushButton(text="➡ Go to well", enabled=False)
         self.zoom_level = FloatSpinBox(value=0.25, min=0.01, step=0.01)
@@ -62,7 +61,6 @@ class PlateBrowser(Container):
         )
         self.roi_loader = None
         self.roi_widget = None
-        self.filter_widget = None
         self.default_zarr_image_subgroup = None
         self.default_roi_table = None
         self.default_roi_name = None
