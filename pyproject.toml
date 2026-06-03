@@ -44,6 +44,7 @@ testing = [
     "pytest-qt",
     "qtpy",
     "napari",
+    "pyqt6",
 ]
 
 [project.urls]
