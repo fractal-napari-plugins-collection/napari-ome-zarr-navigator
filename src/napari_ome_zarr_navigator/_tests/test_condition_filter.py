@@ -200,3 +200,81 @@ class TestFilterDfEmptyResult:
         cf._filter_df()  # must not raise ValueError
 
         assert received == [[]]
+
+
+# ---------------------------------------------------------------------------
+# Regression: deactivating a filter must restore ALL plate wells, not just
+# the wells that appear in the condition table.
+#
+# Setup: plate has 3 wells (B03, C04, D05).  The condition table covers only
+# B03 and C04 (D05 has no assigned conditions).  When every checkbox is off,
+# `_filter_df` must return all 3 plate wells — it should call
+# get_plate_wells(filters=None) rather than passing the condition-table
+# row-set as the filter.
+# ---------------------------------------------------------------------------
+
+# Two condition columns, but only 2 of the 3 plate wells have conditions.
+PARTIAL_CONDITION_DF = pd.DataFrame(
+    {
+        "row": ["B", "C"],
+        "col": ["03", "04"],
+        "timepoint": ["day 0", "day 6"],
+        "drug": ["drugA", "drugB"],
+    }
+)
+PARTIAL_WELL_MAP = {("B", 3): "B03", ("C", 4): "C04", ("D", 5): "D05"}
+ALL_PLATE_WELLS = ["B03", "C04", "D05"]
+
+
+def make_condition_filter_partial() -> ConditionTableFilter:
+    """Plate has 3 wells; condition table only covers B03 and C04."""
+    mock_pm = MagicMock()
+
+    def _get_plate_wells(filters=None):
+        if filters is None:
+            return (
+                ALL_PLATE_WELLS,
+                pd.DataFrame({"row": ["B", "C", "D"], "col": ["03", "04", "05"]}),
+            )
+        matched = sorted(
+            PARTIAL_WELL_MAP[key] for key in filters if key in PARTIAL_WELL_MAP
+        )
+        rows = [w[0] for w in matched]
+        cols = [w[1:] for w in matched]
+        return matched, pd.DataFrame({"row": rows, "col": cols})
+
+    mock_pm.get_plate_wells.side_effect = _get_plate_wells
+    return ConditionTableFilter(mock_pm)
+
+
+class TestFilterDeactivationRestoresAllWells:
+    def test_deactivating_single_filter_restores_all_plate_wells(self):
+        """Disabling all checkboxes should emit ALL plate wells, not condition-table wells."""
+        cf = make_condition_filter_partial()
+        cf.setup_filters(PARTIAL_CONDITION_DF)
+
+        # Enable timepoint filter "day 0" → only B03 has day 0
+        timepoint_fw = cf.filter_container[1]
+        timepoint_fw[1].value = True
+        timepoint_fw[0].value = "day 0"
+
+        received = []
+        cf.signals.wells_changed.connect(received.append)
+
+        # Deactivate the filter — should restore ALL 3 plate wells, not just
+        # the 2 that appear in the condition table.
+        timepoint_fw[1].value = False
+
+        assert received[-1] == ALL_PLATE_WELLS
+
+    def test_deactivating_via_filter_df_restores_all_plate_wells(self):
+        """Direct _filter_df call with all checkboxes off returns all plate wells."""
+        cf = make_condition_filter_partial()
+        cf.setup_filters(PARTIAL_CONDITION_DF)
+
+        received = []
+        cf.signals.wells_changed.connect(received.append)
+
+        cf._filter_df()  # all checkboxes are off by default
+
+        assert received[-1] == ALL_PLATE_WELLS

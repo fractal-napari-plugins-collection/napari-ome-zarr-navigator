@@ -185,3 +185,55 @@ class TestConditionFilter:
             lambda: set(browser.well.choices) == {"B03", "C04"}, timeout=2000
         )
         assert set(browser.well.choices) == {"B03", "C04"}
+
+
+# ---------------------------------------------------------------------------
+# Regression: deactivating a filter must restore ALL plate wells
+# ---------------------------------------------------------------------------
+
+
+class TestFilterDeactivationRestoresAllWells:
+    def test_partial_condition_table_filter_deactivation(
+        self, make_napari_viewer, qtbot, synthetic_plate_partial_conditions_path
+    ):
+        """Disabling a filter must restore ALL plate wells, not just the subset
+        covered by the condition table.
+
+        Plate has 3 wells (B03, C04, D05).  The registration_errors condition
+        table covers only B03 and C04.  Before the fix, disabling all
+        checkboxes caused _filter_df to call
+        get_plate_wells(filters={B03,C04}) instead of
+        get_plate_wells(filters=None), so D05 never came back.
+        """
+        viewer = make_napari_viewer()
+        browser = PlateBrowser(viewer)
+        browser._zarr_selector.set_url(synthetic_plate_partial_conditions_path)
+        qtbot.waitUntil(lambda: browser.btn_load_roi.enabled, timeout=5000)
+
+        all_wells = set(browser.well.choices)
+        assert all_wells == {"B03", "C04", "D05"}
+
+        # Load the plate-based condition table
+        browser._condition_table_source.value = "Plate-based condition table"
+        qtbot.waitUntil(
+            lambda: len(browser._cond_filter.condition_name_selector.choices) > 0,
+            timeout=3000,
+        )
+
+        # Select the registration_errors table (covers only B03 and C04)
+        browser._cond_filter.condition_name_selector.value = "registration_errors"
+        qtbot.waitUntil(lambda: browser._cond_filter.df is not None, timeout=3000)
+
+        # Enable the "reason" filter (first condition column after "severity" is
+        # actually index 2 — "reason" is column 0 of df_without_pk).
+        # filter_container: [0]=condition_name_selector, [1]=reason fw, [2]=severity fw
+        reason_fw = browser._cond_filter.filter_container[1]
+        check_box = reason_fw[1]
+        check_box.value = True
+        qtbot.waitUntil(lambda: len(browser.well.choices) < 3, timeout=2000)
+        assert set(browser.well.choices) == {"B03", "C04"}  # D05 is absent
+
+        # Deactivate the filter → ALL 3 wells must come back (including D05)
+        check_box.value = False
+        qtbot.waitUntil(lambda: set(browser.well.choices) == all_wells, timeout=2000)
+        assert set(browser.well.choices) == all_wells

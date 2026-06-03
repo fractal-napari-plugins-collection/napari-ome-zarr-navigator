@@ -114,3 +114,46 @@ def synthetic_plate_with_conditions_path(tmp_path: Path) -> str:
         overwrite=True,
     )
     return str(plate_dir)
+
+
+def _build_synthetic_plate_3wells(plate_dir: Path) -> OmeZarrPlate:
+    """Create a 3-well (B/03, C/04, D/05) synthetic plate at *plate_dir*."""
+    plate = create_empty_plate(store=str(plate_dir), name="test_plate_3w")
+    for row, col_str in [("B", "03"), ("C", "04"), ("D", "05")]:
+        image_dir = plate_dir / row / col_str / "0"
+        create_synthetic_ome_zarr(
+            store=str(image_dir),
+            shape=(1, 64, 64),
+            table_backend="csv",
+        )
+        plate.add_image(row=row, column=col_str, image_path="0")
+    return plate
+
+
+@pytest.fixture
+def synthetic_plate_partial_conditions_path(tmp_path: Path) -> str:
+    """3-well plate (B03, C04, D05) where the condition table covers only B03
+    and C04.  Used to test that disabling a filter restores all plate wells,
+    not just the wells present in the condition table.
+
+    The condition table has two columns ("reason" and "severity") so that the
+    multi-condition code path is exercised.
+    """
+    plate_dir = tmp_path / "test_plate_partial.zarr"
+    plate = _build_synthetic_plate_3wells(plate_dir)
+    condition_df = pd.DataFrame(
+        {
+            "well": ["B03", "C04"],
+            "row": ["B", "C"],
+            "column": ["03", "04"],
+            "reason": ["sample detachment", "sample detachment"],
+            "severity": ["severe", "mild"],
+        }
+    )
+    plate.add_table(
+        name="registration_errors",
+        table=ConditionTable(condition_df),
+        backend="csv",
+        overwrite=True,
+    )
+    return str(plate_dir)

@@ -158,6 +158,7 @@ class ConditionTableFilter:
         if self._filter_names is None or self.df is None:
             return
 
+        any_active = False
         filter_conditions = []
         for i, name in enumerate(self._filter_names):
             combo_box, check_box = (
@@ -165,10 +166,18 @@ class ConditionTableFilter:
                 self.filter_container[i + 1][1],
             )
             if check_box.value:
+                any_active = True
                 condition = self.df[name] == combo_box.value
             else:
                 condition = pd.Series(True, index=self.df.index)
             filter_conditions.append(condition)
+
+        if not any_active:
+            # No active filters — return all plate wells, not just the subset
+            # covered by the condition table (which may not include every well).
+            wells, _ = self._plate_mgr.get_plate_wells()
+            self.signals.wells_changed.emit(wells)
+            return
 
         and_filter = pd.concat(filter_conditions, axis=1).all(axis=1)
         tbl = self.df.loc[and_filter]
