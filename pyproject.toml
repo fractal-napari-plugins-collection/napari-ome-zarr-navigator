@@ -44,14 +44,15 @@ testing = [
     "pytest-qt",
     "qtpy",
     "napari",
+    "pyqt6",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator"
-"Bug Tracker" = "https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator/issues"
-"Documentation" = "https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator#README.md"
-"Source Code" = "https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator"
-"User Support" = "https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator/issues"
+"Homepage" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator"
+"Bug Tracker" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/issues"
+"Documentation" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator#README.md"
+"Source Code" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator"
+"User Support" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/issues"
 
 [project.entry-points."napari.manifest"]
 napari-ome-zarr-navigator = "napari_ome_zarr_navigator:napari.yaml"
@@ -96,3 +97,6 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = "--color=yes --cov=napari_ome_zarr_navigator --cov-report=xml"
+
+[tool.coverage.run]
+omit = ["*/_tests/*"]

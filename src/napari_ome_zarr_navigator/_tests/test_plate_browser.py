@@ -103,16 +103,20 @@ class TestLaunchLoadRoi:
         browser.well.value = "B03"
         browser.launch_load_roi()
 
-        assert browser.roi_loader is not None
+        roi_loader = browser.roi_loader
+        assert roi_loader is not None
         assert browser.roi_widget is not None
 
-        # Wait for the ROI loader's async init workers to finish so they
-        # don't fire callbacks into already-destroyed Qt widgets at teardown.
-        with qtbot.waitSignal(
-            browser.roi_loader.image_changed_event.roi_choices_updated,
-            timeout=10000,
-        ):
-            pass
+        # Wait for ALL async init steps to fully complete before the test ends.
+        # Waiting for roi_choices_updated is not sufficient: on slower runners
+        # (Linux CI), Qt queues one event per connected slot on the same
+        # thread_worker.returned signal.  roi_choices_updated fires from the
+        # first slot, but the second slot (_btn_ctrl.on_step_done, which
+        # enables _run_button) is still in the event queue.  If teardown begins
+        # before that event is processed, Qt deletes the button and the deferred
+        # callback crashes.  Waiting for _run_button.enabled guarantees every
+        # queued callback has run.
+        qtbot.waitUntil(lambda: roi_loader._run_button.enabled, timeout=10000)
 
 
 # ---------------------------------------------------------------------------

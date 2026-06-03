@@ -26,12 +26,18 @@ jobs:
         python-version: ['3.11', '3.12']
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Cache Pooch folder
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pooch
+          key: pooch-${{ runner.os }}-${{ matrix.python-version }}
 
       # these libraries enable testing on Qt on linux
       - uses: tlambert03/setup-qt-libs@v1
@@ -46,22 +52,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ".[testing]" pyqt5
+          python -m pip install ".[testing]"
 
       - name: Test
         uses: aganders3/headless-gui@v1
         with:
           run: pytest -v --color=yes --cov=napari_ome_zarr_navigator --cov-report=xml
 
-      - name: Coverage
-        uses: codecov/codecov-action@v3
-
-      - name: Cache Pooch folder
-        id: cache-pooch-folder
-        uses: actions/cache@v3
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
         with:
-          path: ~/.cache/pooch
-          key: pooch-cache
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   deploy:
     # this will run when you have tagged a commit, starting with "v*"
@@ -71,9 +73,9 @@ jobs:
     runs-on: ubuntu-latest
     if: contains(github.ref, 'tags')
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.x"
       - name: Install dependencies
