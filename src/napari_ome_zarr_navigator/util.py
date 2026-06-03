@@ -3,20 +3,20 @@ import logging
 import string
 from enum import Enum, auto
 from importlib.resources import files
-from typing import Optional
 
 from magicgui.widgets import (
     Container,
     FileEdit,
     Label,
     LineEdit,
+    PushButton,
     RadioButtons,
 )
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from qtpy.QtCore import QTimer
-from qtpy.QtGui import QIcon
-from qtpy.QtWidgets import QLineEdit
+from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
+from qtpy.QtGui import QIcon  # type: ignore[attr-defined]
+from qtpy.QtWidgets import QLineEdit  # type: ignore[attr-defined]
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -41,9 +41,9 @@ def numeric_to_alpha(numeric: int, upper: bool = True) -> str:
         Single alphabet character
     """
     if upper:
-        string.ascii_uppercase[numeric - 1]
+        return string.ascii_uppercase[numeric - 1]
     else:
-        string.ascii_lowercase[numeric - 1]
+        return string.ascii_lowercase[numeric - 1]
 
 
 def calculate_well_positions(plate_store, row, col, is_plate=True):
@@ -55,9 +55,7 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
         column=col,
         image_path=zarr_plate.get_well(row, col).paths()[0],
     )
-    ome_zarr_container = open_ome_zarr_container(
-        image_store, cache=True, mode="r"
-    )
+    ome_zarr_container = open_ome_zarr_container(image_store, cache=True, mode="r")
     level = ome_zarr_container.level_paths[0]
     ome_zarr_image = ome_zarr_container.get_image(path=level)
     shape = ome_zarr_image.shape[-2:]
@@ -99,7 +97,7 @@ class ZarrSelector(Container):
             label="Source",
             choices=["File", "HTTP"],
             orientation="horizontal",
-            value="File",
+            value="File",  # type: ignore[call-arg]
         )
 
         # internal state
@@ -108,7 +106,7 @@ class ZarrSelector(Container):
         self._last_token = None
 
         # Inputs
-        self._file_picker = FileEdit(label="Zarr file", mode=file_mode)
+        self._file_picker = FileEdit(label="Zarr file", mode=file_mode)  # type: ignore[arg-type]
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
 
@@ -120,9 +118,7 @@ class ZarrSelector(Container):
         eye_icon = QIcon(str(pkg / "icons" / "eye.svg"))
         eye_off_icon = QIcon(str(pkg / "icons" / "eye-off.svg"))
 
-        self._eye_action = le.addAction(
-            eye_off_icon, QLineEdit.TrailingPosition
-        )
+        self._eye_action = le.addAction(eye_off_icon, QLineEdit.TrailingPosition)
         self._eye_action.setCheckable(True)
 
         def _toggle(checked: bool) -> None:
@@ -139,7 +135,7 @@ class ZarrSelector(Container):
         self._http_token.hide()
 
         self._main = Container(
-            widgets=[Label(value=label), self._source_selector, self._stack]
+            widgets=[Label(value=label), self._source_selector, self._stack]  # type: ignore[call-arg, arg-type]
         )
         super().__init__(widgets=[self._main])
 
@@ -182,10 +178,7 @@ class ZarrSelector(Container):
 
         if (self.source == "File" and curr_file != self._last_file_url) or (
             self.source == "HTTP"
-            and (
-                curr_http != self._last_http_url
-                or curr_token != self._last_token
-            )
+            and (curr_http != self._last_http_url or curr_token != self._last_token)
         ):
             # Update state
             self._last_file_url = curr_file
@@ -205,9 +198,9 @@ class ZarrSelector(Container):
     def on_change(self, callback):
         self._callbacks.append(callback)
 
-    def set_url(self, zarr_url: str, token: Optional[str] = None):
+    def set_url(self, zarr_url: str, token: str | None = None):
         """Set a zarr_url"""
-        self._file_picker.value = zarr_url
+        self._file_picker.value = zarr_url  # type: ignore[assignment]
         self._http_url.value = zarr_url
         self._http_token.value = token or ""
 
@@ -223,5 +216,70 @@ class ZarrSelector(Container):
             return self._http_url.value.strip()
 
     @property
-    def token(self) -> str:
+    def token(self) -> str | None:
         return self._http_token.value.strip() or None
+
+
+class LoaderButtonController:
+    """Manages a PushButton's text, enabled state, and loading/init animations.
+
+    Owns both QTimers so ROILoader doesn't need to touch them directly.
+    Call begin_init(n) before launching n async init steps, then on_step_done()
+    from each step's returned callback. set_state() handles LOADING animation.
+    """
+
+    def __init__(self, button: PushButton, ready_label: str = "Load ROI") -> None:
+        self._button = button
+        self._ready_label = ready_label
+        self._dots = 0
+        self._pending = 0
+        self.current_state: LoaderState | None = None
+
+        self._loading_timer = QTimer()  # type: ignore[call-arg]
+        self._loading_timer.setInterval(300)
+        self._loading_timer.timeout.connect(self._animate_loading)
+
+        self._init_timer = QTimer()  # type: ignore[call-arg]
+        self._init_timer.setSingleShot(True)
+        self._init_timer.setInterval(150)
+        self._init_timer.timeout.connect(self._show_initializing)
+
+    def set_state(self, new: LoaderState) -> None:
+        """Set button text/enabled and manage the loading dot animation."""
+        self._loading_timer.stop()
+        self.current_state = new
+        if new is LoaderState.INITIALIZING:
+            self._button.enabled = False
+            self._button.text = "Initializing"
+        elif new is LoaderState.READY:
+            self._button.enabled = True
+            self._button.text = self._ready_label
+        elif new is LoaderState.LOADING:
+            self._button.enabled = False
+            self._button.text = "Loading"
+            self._dots = 0
+            self._loading_timer.start()
+
+    def begin_init(self, n_steps: int = 1) -> None:
+        """Disable button and restart the debounce timer for n pending steps."""
+        self._button.enabled = False
+        self._pending = n_steps
+        if self._init_timer.isActive():
+            self._init_timer.stop()
+        self._init_timer.start()
+
+    def on_step_done(self, *_) -> None:
+        """Call when one init step completes. Goes READY once all steps are done."""
+        self._pending = max(0, self._pending - 1)
+        if self._pending == 0:
+            if self._init_timer.isActive():
+                self._init_timer.stop()
+            self.set_state(LoaderState.READY)
+
+    def _show_initializing(self) -> None:
+        if self._pending > 0:
+            self.set_state(LoaderState.INITIALIZING)
+
+    def _animate_loading(self) -> None:
+        self._dots = (self._dots + 1) % 4
+        self._button.text = "Loading" + "." * self._dots

@@ -33,7 +33,7 @@ dependencies = [
     "napari-ome-zarr<0.8",
     "ome-zarr",
     "wget",
-    "ngio>=0.5",
+    "ngio>=0.5,<0.6",
     "numcodecs!=0.14.0,!=0.14.1,!=0.16", # avoids zarr issue
 ]
 
@@ -69,6 +69,7 @@ packages = ["src/napari_ome_zarr_navigator"]
 line-length = 88
 target-version = "py311"
 fix = true
+exclude = ["src/**/generate_test_data/"]
 
 [tool.ruff.lint]
 select = [

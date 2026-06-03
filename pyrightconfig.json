@@ -1,0 +1,8 @@
+{
+  "include": ["src"],
+  "venvPath": ".",
+  "venv": ".pixi/envs/default",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false
+}

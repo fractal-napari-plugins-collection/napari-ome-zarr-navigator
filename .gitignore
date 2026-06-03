@@ -89,3 +89,8 @@ examples/playground.py
 
 # UV lock file
 uv.lock
+
+# Local-only example files
+example_settings/
+src/napari_ome_zarr_navigator/generate_test_data/condition_table.csv
+src/napari_ome_zarr_navigator/generate_test_data/*.zarr/

@@ -6,9 +6,9 @@ visibility: public
 categories: ["Dataset", "Visualization"]
 contributions:
   commands:
-    - id: napari-ome-zarr-navigator.make_img_browser
-      python_name: napari_ome_zarr_navigator:ImgBrowser
-      title: Image Browser
+    - id: napari-ome-zarr-navigator.make_plate_browser
+      python_name: napari_ome_zarr_navigator:PlateBrowser
+      title: Plate Browser
     - id: napari-ome-zarr-navigator.make_roi_loader
       python_name: napari_ome_zarr_navigator.roi_loader:ROILoaderImage
       title: ROI Loader
@@ -26,7 +26,7 @@ contributions:
       display_name: leukemia
       key: unique_id.2
   widgets:
-    - command: napari-ome-zarr-navigator.make_img_browser
-      display_name: Image Browser
+    - command: napari-ome-zarr-navigator.make_plate_browser
+      display_name: Plate Browser
     - command: napari-ome-zarr-navigator.make_roi_loader
       display_name: ROI Loader
