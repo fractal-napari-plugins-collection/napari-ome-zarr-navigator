@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/napari-ome-zarr-navigator.svg?color=green)](https://pypi.org/project/napari-ome-zarr-navigator)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-ome-zarr-navigator.svg?color=green)](https://python.org)
 [![tests](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/workflows/tests/badge.svg?branch=main)](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions)
-[![codecov](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator/branch/main/graph/badge.svg)](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator)
+[![codecov](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator/graph/badge.svg?token=Mg1081BoRA)](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator)
 
 A plugin to browse OME-Zarr plates by conditions and load images, labels and features from ROIs
 
@@ -105,5 +105,5 @@ If you encounter any problems, please [file an issue] along with a detailed desc
 
 [napari]: https://github.com/napari/napari
 [BSD-3]: http://opensource.org/licenses/BSD-3-Clause
-[file an issue]: https://github.com/fractal-analytics-platform/napari-ome-zarr-navigator/issues
+[file an issue]: https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/issues
 [pip]: https://pypi.org/project/pip/
