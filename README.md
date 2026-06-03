@@ -3,7 +3,7 @@
 [![License BSD-3](https://img.shields.io/pypi/l/napari-ome-zarr-navigator.svg?color=green)](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/raw/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/napari-ome-zarr-navigator.svg?color=green)](https://pypi.org/project/napari-ome-zarr-navigator)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-ome-zarr-navigator.svg?color=green)](https://python.org)
-[![tests](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/workflows/tests/badge.svg?branch=main)](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions)
+[![tests](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions/workflows/test_and_deploy.yml/badge.svg?branch=main)](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions)
 [![codecov](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator/graph/badge.svg?token=Mg1081BoRA)](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator)
 
 A plugin to browse OME-Zarr plates by conditions and load images, labels and features from ROIs
