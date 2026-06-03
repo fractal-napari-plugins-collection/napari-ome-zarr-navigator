@@ -82,8 +82,13 @@ For a fresh environment we recommend [miniforge](https://github.com/conda-forge/
 conda create -n napari-ome-zarr python=3.12 napari pyqt -c conda-forge
 conda activate napari-ome-zarr
 pip install napari-ome-zarr-navigator
+napari
 ```
 
+Optionally also install additional plugins like `napari-feature-classifier` and `napari-feature-visualization`, as in:
+```bash
+pip install napari-feature-classifier napari-feature-visualization
+```
 
 ## Contributing
 
