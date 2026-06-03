@@ -268,8 +268,18 @@ class ROILoader(Container):
         self.image_changed_event.roi_choices_updated.emit(roi_list)
 
     def _apply_roi_table_choices_update(self, table_list):
-        self._roi_table_picker.choices = table_list
-        self._roi_table_picker._default_choices = table_list
+        # Disconnect update_roi_selection while setting choices: changing choices
+        # may change the picker's value, which would fire update_roi_selection
+        # mid-init, calling begin_init(1) and resetting the step counter.  That
+        # causes on_step_done() to declare READY before the _fetch_rois workers
+        # launched by _on_tables_ready have finished, leaving dangling callbacks
+        # that crash on already-deleted Qt widgets at teardown.
+        self._roi_table_picker.changed.disconnect(self.update_roi_selection)
+        try:
+            self._roi_table_picker.choices = table_list
+            self._roi_table_picker._default_choices = table_list
+        finally:
+            self._roi_table_picker.changed.connect(self.update_roi_selection)
         self.image_changed_event.roi_tables_updated.emit(table_list)
 
     def _on_state_change(self, new_state: LoaderState):

@@ -8960,8 +8960,8 @@ packages:
   requires_python: '>=3.11'
 - pypi: ./
   name: napari-ome-zarr-navigator
-  version: 0.2.7.dev22+g2d182f383.d20260601
-  sha256: 96e362aa9e92786362612105ea5ca39c4aef9ad9e3b83c8f4c659d2ca79761b1
+  version: 0.3.1.dev3+g1ea4e1b1b.d20260603
+  sha256: 8fc8112085feaeac8477ad07b5d5991ef453a21ea302f7fb5b93ad009646533a
   requires_dist:
   - magicgui
   - napari-ome-zarr<0.8
@@ -8973,6 +8973,7 @@ packages:
   - scikit-image
   - wget
   - napari ; extra == 'testing'
+  - pyqt6 ; extra == 'testing'
   - pytest ; extra == 'testing'
   - pytest-cov ; extra == 'testing'
   - pytest-qt ; extra == 'testing'
