@@ -7,11 +7,12 @@ except ImportError:
 from .plate_browser import (
     PlateBrowser,
 )
+from .roi_annotator import ROIAnnotatorImage
 from .roi_loader import (
     ROILoader,
 )
 
-__all__ = ("ROILoader", "PlateBrowser")
+__all__ = ("ROILoader", "PlateBrowser", "ROIAnnotatorImage")
 FILE = Path(__file__).resolve()
 _PACKAGE_DIR = FILE.parents[2]
 _MODULE_DIR = FILE.parent

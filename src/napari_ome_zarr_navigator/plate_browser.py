@@ -50,6 +50,13 @@ class PlateBrowser(Container):
             tooltip="Once you've loaded a ROI with the 'Select ROI to load' "
             "button, this allows you to load the same ROI for different wells.",
         )
+        self.btn_annotate_roi = PushButton(
+            text="Annotate ROIs",
+            enabled=False,
+            tooltip="Open the ROI Annotator to draw ROIs on the selected well.",
+        )
+        self.roi_annotator = None
+        self.roi_annotator_widget = None
         self._condition_table_source = ComboBox(
             label="Filter by condition",
             choices=[
@@ -92,6 +99,7 @@ class PlateBrowser(Container):
                 ),
                 self.btn_load_roi,
                 self.btn_load_default_roi,
+                self.btn_annotate_roi,
             ],
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
@@ -101,6 +109,7 @@ class PlateBrowser(Container):
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
+        self.btn_annotate_roi.clicked.connect(self.launch_roi_annotator)
         self._condition_table_source.changed.connect(
             self.on_condition_table_source_changed
         )
@@ -123,6 +132,7 @@ class PlateBrowser(Container):
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
             self.btn_load_default_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
             self.well.choices = []
             self.well._default_choices = []
             return
@@ -149,9 +159,11 @@ class PlateBrowser(Container):
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
+            self.btn_annotate_roi.enabled = True
         else:
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
 
     def _update_well_choices(self, wells: list) -> None:
         with suppress(Exception):
@@ -164,6 +176,7 @@ class PlateBrowser(Container):
             self._zarr_selector.set_url("")
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
             self.well.choices = []
             self.well._default_choices = []
             self._cond_filter.filter_container.clear()
@@ -211,6 +224,39 @@ class PlateBrowser(Container):
                 tabify=True,
                 allowed_areas=["right"],
             )
+
+    def launch_roi_annotator(self):
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorPlate
+
+        assert self._plate_mgr.plate_store is not None
+        wells = get_row_cols(self.well.value)
+        if len(wells) != 1:
+            msg = "Please select a single well."
+            logger.info(msg)
+            show_info(msg)
+            return
+
+        if self.roi_annotator_widget:
+            with suppress(RuntimeError):
+                self.viewer.window.remove_dock_widget(self.roi_annotator_widget)  # type: ignore[arg-type]
+
+        is_local = self._zarr_selector._source_selector.value == "File"
+        self.roi_annotator = ROIAnnotatorPlate(
+            self.viewer,
+            self._plate_mgr.plate_store,
+            wells[0][0],
+            wells[0][1],
+            self,
+            self._plate_mgr.is_plate,
+            plate_id=self._zarr_selector.url,
+            is_local=is_local,
+        )
+        self.roi_annotator_widget = self.viewer.window.add_dock_widget(
+            widget=self.roi_annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def load_default_roi(self):
         assert self._plate_mgr.plate_store is not None

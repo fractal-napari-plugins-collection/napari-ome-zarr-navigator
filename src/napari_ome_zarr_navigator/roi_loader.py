@@ -26,7 +26,6 @@ from napari_ome_zarr_navigator.roi_loading_utils import (
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     LoaderState,
-    NapariHandler,
     ZarrSelector,
     calculate_well_positions,
 )
@@ -50,7 +49,6 @@ class ROILoader(Container):
         extra_widgets=None,
     ):
         self._viewer = viewer
-        self.setup_logging()
         # Used to identify the zarr image in the feature table
         self.zarr_id = ""
 
@@ -172,13 +170,6 @@ class ROILoader(Container):
     @state.setter
     def state(self, new: LoaderState) -> None:
         self._btn_ctrl.set_state(new)
-
-    def setup_logging(self):
-        for handler in logger.root.handlers[:]:
-            logging.root.removeHandler(handler)
-        napari_handler = NapariHandler()
-        napari_handler.setLevel(logging.INFO)
-        logger.addHandler(napari_handler)
 
     # ------------------------------------------------------------------
     # Initialization sequence
@@ -488,6 +479,7 @@ class ROILoaderImage(ROILoader):
         viewer: napari.Viewer,
         zarr_url: str | None = None,
         token: str | None = None,
+        source: str = "File",
     ):
         self.zarr_selector = ZarrSelector()
 
@@ -499,10 +491,29 @@ class ROILoaderImage(ROILoader):
         self.zarr_selector.on_change(self.update_image_selection)
 
         if zarr_url:
-            if token:
-                self.zarr_selector.set_url(zarr_url, token=token)
-            else:
-                self.zarr_selector.set_url(zarr_url)
+            self.zarr_selector.configure(source=source, url=zarr_url, token=token)
+            self.zarr_selector.hide()
+            self.update_image_selection()
+        else:
+            self._btn_launch_annotator = PushButton(text="Annotate ROIs interactively")
+            self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
+            self.append(self._btn_launch_annotator)
+
+    def _launch_roi_annotator(self):
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorImage
+
+        annotator = ROIAnnotatorImage(
+            viewer=self._viewer,
+            zarr_url=self.zarr_selector.url,
+            token=self.zarr_selector.token,
+            source=self.zarr_selector.source,
+        )
+        self._viewer.window.add_dock_widget(
+            widget=annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def update_image_selection(self):
         source = self.zarr_selector.source

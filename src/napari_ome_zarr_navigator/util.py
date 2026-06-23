@@ -80,8 +80,24 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
 
 class NapariHandler(logging.Handler):
     def emit(self, record):
+        from napari.utils.notifications import show_warning
+
         log_entry = self.format(record)
-        show_info(log_entry)
+        if record.levelno >= logging.WARNING:
+            show_warning(log_entry)
+        else:
+            show_info(log_entry)
+
+
+# Attach once to the package root logger so all sub-module loggers
+# (plate_browser, roi_loader, roi_annotator, …) route through it.
+# propagate=False prevents double-printing via the root StreamHandler.
+_pkg_logger = logging.getLogger("napari_ome_zarr_navigator")
+if not any(isinstance(h, NapariHandler) for h in _pkg_logger.handlers):
+    _handler = NapariHandler()
+    _handler.setLevel(logging.INFO)
+    _pkg_logger.addHandler(_handler)
+    _pkg_logger.propagate = False
 
 
 class LoaderState(Enum):
@@ -202,6 +218,18 @@ class ZarrSelector(Container):
         """Set a zarr_url"""
         self._file_picker.value = zarr_url  # type: ignore[assignment]
         self._http_url.value = zarr_url
+        self._http_token.value = token or ""
+
+    def configure(self, source: str, url: str, token: str | None = None) -> None:
+        """Set source, URL and token together.
+
+        Use when pre-populating from another widget so the source (File vs HTTP)
+        is preserved and credentials are not lost. set_url() alone does not set
+        the source selector, so HTTP tokens would be silently ignored.
+        """
+        self._source_selector.value = source  # triggers _on_source_changed
+        self._file_picker.value = url  # type: ignore[assignment]
+        self._http_url.value = url
         self._http_token.value = token or ""
 
     @property
