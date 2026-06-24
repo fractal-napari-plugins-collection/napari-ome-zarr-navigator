@@ -103,6 +103,15 @@ class ROILoader(Container):
         self._advanced_container.visible = False
 
         self._run_button = PushButton(value=False, text="Load ROI")
+        self._refresh_tables_btn = PushButton(text="↺", enabled=False)
+        self._refresh_tables_btn.tooltip = "Refresh ROI table selection"
+        self._refresh_tables_btn.native.setFixedWidth(28)
+        self._roi_table_row = Container(
+            widgets=[self._roi_table_picker, self._refresh_tables_btn],
+            layout="horizontal",
+            labels=False,
+        )
+        self._roi_table_row.label = "ROI Table"
         self._ome_zarr_container: ngio.OmeZarrContainer | None = None
 
         self.image_changed_event = ROILoaderSignals()
@@ -117,9 +126,10 @@ class ROILoader(Container):
         self._label_loading_mode.changed.connect(self._on_label_mode_changed)
         self._advanced_toggle.clicked.connect(self._toggle_advanced)
         self._run_button.clicked.connect(self.run)
+        self._refresh_tables_btn.clicked.connect(self.refresh_roi_tables)
 
         widgets = [
-            self._roi_table_picker,
+            self._roi_table_row,
             self._roi_picker,
             self._channel_picker,
             self._label_picker,
@@ -178,6 +188,7 @@ class ROILoader(Container):
 
     def _start_initialization(self, *_):
         # 3 steps: (1) ROI-tables list, (2) ROI-names (dependent on 1), (3) image-attrs
+        self._refresh_tables_btn.enabled = True
         self._btn_ctrl.begin_init(n_steps=3)
 
         # (1) Start ROI-tables lookup:
@@ -192,6 +203,22 @@ class ROILoader(Container):
         # (3) Kick off image-attrs right away (synchronous), then mark done:
         self.update_available_image_attrs(self.ome_zarr_container)
         self._btn_ctrl.on_step_done()
+
+    def refresh_roi_tables(self) -> None:
+        """Re-fetch ROI table list from disk, preserving current selections if still valid."""
+        if self.ome_zarr_container is None:
+            return
+        self._btn_ctrl.begin_init(
+            n_steps=2
+        )  # _on_tables_ready fires on_step_done twice
+
+        @thread_worker
+        def _get():
+            return self.get_roi_tables()
+
+        w = _get()  # type: ignore[call-arg]
+        w.returned.connect(self._on_tables_ready)
+        w.start()
 
     def get_roi_tables(self) -> list[str]:
         """
@@ -391,6 +418,7 @@ class ROILoader(Container):
             picker._default_choices = []
         self._image_res_map = {}
         self._label_res_map = {}
+        self._refresh_tables_btn.enabled = False
         self.state = LoaderState.INITIALIZING
 
     # ------------------------------------------------------------------

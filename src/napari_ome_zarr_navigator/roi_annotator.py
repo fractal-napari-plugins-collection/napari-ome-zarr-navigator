@@ -49,6 +49,7 @@ class ROIAnnotator(Container):
         self.translation: tuple[float, float] = (0.0, 0.0)
         self.layer_base_name: str = ""
         self.image_extent: tuple[float, float] | None = None  # (y_size, x_size) in µm
+        self._post_save_callbacks: list = []
 
         self._mode_selector = RadioButtons(
             label="Mode",
@@ -259,6 +260,8 @@ class ROIAnnotator(Container):
                 overwrite=overwrite,
             )
             logger.info("Saved %d ROI(s) to table '%s'.", len(rois), table_name)
+            for cb in self._post_save_callbacks:
+                cb()
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to save ROI table: %s", exc)
         finally:

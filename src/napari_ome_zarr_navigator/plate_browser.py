@@ -221,6 +221,7 @@ class PlateBrowser(Container):
                 tabify=True,
                 allowed_areas=["right"],
             )
+            self._wire_annotator_loader()
 
     def launch_roi_annotator(self):
         from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorPlate
@@ -252,6 +253,22 @@ class PlateBrowser(Container):
             tabify=True,
             allowed_areas=["right"],
         )
+        self._wire_annotator_loader()
+
+    def _wire_annotator_loader(self):
+        """Connect annotator's post-save to loader's refresh (plate case only)."""
+        if self.roi_annotator is None or self.roi_loader is None:
+            return
+        import weakref
+
+        loader_ref = weakref.ref(self.roi_loader)
+
+        def _auto_refresh():
+            loader = loader_ref()
+            if loader is not None:
+                loader.refresh_roi_tables()
+
+        self.roi_annotator._post_save_callbacks = [_auto_refresh]
 
     def load_default_roi(self):
         assert self._plate_mgr.plate_store is not None
