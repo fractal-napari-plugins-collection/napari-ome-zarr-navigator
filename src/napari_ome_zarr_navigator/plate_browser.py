@@ -11,7 +11,6 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container
 from ngio.utils import fractal_fsspec_store
 
@@ -201,9 +200,7 @@ class PlateBrowser(Container):
         assert self._plate_mgr.plate_store is not None
         wells = get_row_cols(self.well.value)
         if len(wells) != 1:
-            msg = "Please select a single well."
-            logger.info(msg)
-            show_info(msg)
+            logger.info("Please select a single well.")
         else:
             if self.roi_widget:
                 with suppress(RuntimeError):
@@ -231,9 +228,7 @@ class PlateBrowser(Container):
         assert self._plate_mgr.plate_store is not None
         wells = get_row_cols(self.well.value)
         if len(wells) != 1:
-            msg = "Please select a single well."
-            logger.info(msg)
-            show_info(msg)
+            logger.info("Please select a single well.")
             return
 
         if self.roi_annotator_widget:
@@ -347,9 +342,7 @@ class PlateBrowser(Container):
                 self.viewer.camera.center = rec.mean(axis=0)
             self.viewer.camera.zoom = self.zoom_level.value
         else:
-            msg = "Please select at least one well"
-            logger.info(msg)
-            show_info(msg)
+            logger.info("Please select at least one well")
 
     def on_condition_table_source_changed(self):
         if not self._plate_mgr.zarr_plate:

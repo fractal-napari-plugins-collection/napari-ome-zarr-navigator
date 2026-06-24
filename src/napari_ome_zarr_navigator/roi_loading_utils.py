@@ -10,7 +10,6 @@ import numpy as np
 from napari.layers._source import Source
 from napari.qt.threading import thread_worker
 from napari.utils.colormaps import Colormap
-from napari.utils.notifications import show_info
 from qtpy.QtCore import QObject, Signal  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import (
@@ -19,7 +18,6 @@ from napari_ome_zarr_navigator.util import (
 from napari_ome_zarr_navigator.well_utils import WELL_LAYER_PATTERN
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def _compute_scale(ngio_img, ndim: int) -> tuple:
@@ -370,14 +368,12 @@ def orchestrate_load_roi(
     def make_channel_error_handler(ch_name: str) -> Callable[[BaseException], None]:
         def on_error(exc: BaseException) -> None:
             logger.error("Channel '%s' load failed: %s", ch_name, exc, exc_info=exc)
-            show_info(f"Failed to load channel '{ch_name}': {exc}")
             worker_done()
 
         return on_error
 
     def on_labels_error(exc: BaseException) -> None:
         logger.error("Labels/features load failed: %s", exc, exc_info=exc)
-        show_info(f"Failed to load labels/features: {exc}")
         worker_done()
 
     # 2) launch one worker per channel

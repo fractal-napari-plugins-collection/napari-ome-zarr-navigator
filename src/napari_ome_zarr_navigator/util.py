@@ -97,6 +97,7 @@ if not any(isinstance(h, NapariHandler) for h in _pkg_logger.handlers):
     _handler = NapariHandler()
     _handler.setLevel(logging.INFO)
     _pkg_logger.addHandler(_handler)
+    _pkg_logger.setLevel(logging.INFO)
     _pkg_logger.propagate = False
 
 

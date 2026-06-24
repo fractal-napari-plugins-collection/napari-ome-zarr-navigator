@@ -3,7 +3,6 @@ from collections.abc import Callable
 
 import pandas as pd
 from magicgui.widgets import CheckBox, ComboBox, Container
-from napari.utils.notifications import show_info
 from ngio.utils import NgioValueError
 from qtpy.QtCore import QObject, Signal  # type: ignore[attr-defined]
 
@@ -97,9 +96,7 @@ class ConditionTableFilter:
             self.filter_container.visible = True
         else:
             self.filter_container.visible = False
-            msg = "No plate condition tables found"
-            logger.info(msg)
-            show_info(msg)
+            logger.info("No plate condition tables found")
 
     def clear_condition_tables(self) -> None:
         """Reset the condition-table selector and hide filter UI."""
@@ -129,9 +126,7 @@ class ConditionTableFilter:
             self.filter_container.visible = True
         else:
             self.filter_container.visible = False
-            msg = "No condition tables found in the images"
-            logger.info(msg)
-            show_info(msg)
+            logger.info("No condition tables found in the images")
 
     def load_image_condition_table(
         self, zarr_plate, table_name: str

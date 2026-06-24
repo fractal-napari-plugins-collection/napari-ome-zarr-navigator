@@ -31,7 +31,6 @@ from napari_ome_zarr_navigator.util import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Sentinel values shown in the UI when no ROI tables are found.
 # Whole-image loading is not yet implemented; these keep the UI from crashing.

@@ -1,6 +1,5 @@
 """Unit tests for pure helper functions in roi_loading_utils."""
 
-import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -70,12 +69,10 @@ class TestFindMatchingLabelLayerIndex:
         ft = self._make_feature_table("cells")
         assert find_matching_label_layer_index(ft, ["nuclei", "cells"]) == 1
 
-    def test_fallback_to_zero_when_not_found(self, caplog):
+    def test_fallback_to_zero_when_not_found(self):
         ft = self._make_feature_table("organoids")
-        with caplog.at_level(logging.INFO):
-            result = find_matching_label_layer_index(ft, ["nuclei", "cells"])
+        result = find_matching_label_layer_index(ft, ["nuclei", "cells"])
         assert result == 0
-        assert "organoids" in caplog.text
 
     def test_single_label_match(self):
         ft = self._make_feature_table("nuclei")

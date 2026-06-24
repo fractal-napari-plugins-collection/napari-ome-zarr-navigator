@@ -12,7 +12,6 @@ from magicgui.widgets import (
     PushButton,
     RadioButtons,
 )
-from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.common import Roi
 from ngio.tables import RoiTable
@@ -24,7 +23,6 @@ from napari_ome_zarr_navigator.util import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Maps UI display names to the string identifiers accepted by ngio's add_table()
 _BACKEND_MAP: dict[str, str] = {
@@ -91,7 +89,7 @@ class ROIAnnotator(Container):
 
     def _on_mode_changed(self, value: str):
         if value == _MODE_MASK:
-            show_info("Masking ROI mode is not yet implemented.")
+            logger.info("Masking ROI mode is not yet implemented.")
             self._mode_selector.value = _MODE_EMPTY
 
     @property
@@ -176,10 +174,12 @@ class ROIAnnotator(Container):
 
     def save_roi_table(self):
         if self.store is None:
-            show_info("No Zarr store set. Cannot save ROI table.")
+            logger.warning("No Zarr store set. Cannot save ROI table.")
             return
         if not self.is_local:
-            show_info("Saving ROI tables is only supported for local (file) stores.")
+            logger.warning(
+                "Saving ROI tables is only supported for local (file) stores."
+            )
             return
 
         name = self._shapes_layer_name
@@ -189,24 +189,24 @@ class ROIAnnotator(Container):
             if isinstance(layer, napari.layers.Shapes) and layer.name == name
         ]
         if not matching:
-            show_info(
-                f"No ROI layer '{name}' found. Click 'Initialize ROI Layer' first."
+            logger.warning(
+                "No ROI layer '%s' found. Click 'Initialize ROI Layer' first.", name
             )
             return
 
         shapes_layer = matching[0]
         if len(shapes_layer.data) == 0:
-            show_info("No shapes in the ROI layer. Draw some rectangles first.")
+            logger.warning("No shapes in the ROI layer. Draw some rectangles first.")
             return
 
         rois = self._shapes_to_rois(shapes_layer)
         if not rois:
-            show_info("No valid rectangles found. Only rectangles are supported.")
+            logger.warning("No valid rectangles found. Only rectangles are supported.")
             return
 
         table_name = self._table_name.value.strip()
         if not table_name:
-            show_info("Table name cannot be empty.")
+            logger.warning("Table name cannot be empty.")
             return
 
         backend = _BACKEND_MAP[self._backend_picker.value]
@@ -220,9 +220,10 @@ class ROIAnnotator(Container):
             self.store, mode="r", cache=False
         ).list_tables()
         if table_name in existing_tables and not overwrite:
-            show_info(
-                f"Table '{table_name}' already exists. "
-                "Enable 'Overwrite existing table' to replace it."
+            logger.warning(
+                "Table '%s' already exists. "
+                "Enable 'Overwrite existing table' to replace it.",
+                table_name,
             )
             return
 
@@ -237,11 +238,9 @@ class ROIAnnotator(Container):
                 backend=backend,
                 overwrite=overwrite,
             )
-            show_info(f"Saved {len(rois)} ROI(s) to table '{table_name}'.")
             logger.info("Saved %d ROI(s) to table '%s'.", len(rois), table_name)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to save ROI table: %s", exc)
-            show_info(f"Error saving ROI table: {exc}")
         finally:
             self._save_btn.text = "Save ROI Table"
             self._update_save_btn_state()

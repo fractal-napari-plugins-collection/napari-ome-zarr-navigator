@@ -67,11 +67,11 @@ def test_initialize_roi_layer_creates_shapes(make_napari_viewer):
     assert shapes_layers[0].mode == "add_rectangle"
 
 
-def test_initialize_roi_layer_reuses_existing(make_napari_viewer):
+def test_initialize_roi_layer_replaces_existing(make_napari_viewer):
     viewer = make_napari_viewer()
     annotator = ROIAnnotator(viewer)
     annotator.initialize_roi_layer()
-    annotator.initialize_roi_layer()  # second call should reuse
+    annotator.initialize_roi_layer()  # second call should replace
 
     shapes_layers = [
         layer for layer in viewer.layers if isinstance(layer, napari.layers.Shapes)
@@ -129,7 +129,7 @@ def test_save_btn_disabled_for_http_store(make_napari_viewer):
     viewer = make_napari_viewer()
     annotator = ROIAnnotator(viewer)
     # Simulate HTTP store (non-local)
-    annotator.store = "https://example.com/plate.zarr"
+    annotator.store = "https://example.com/image.zarr"
     annotator.is_local = False
     annotator._update_save_btn_state()
     assert not annotator._save_btn.enabled
