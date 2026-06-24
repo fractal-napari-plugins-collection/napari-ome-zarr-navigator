@@ -47,6 +47,7 @@ class ROIAnnotator(Container):
         self.is_local: bool = True
         self.translation: tuple[float, float] = (0.0, 0.0)
         self.layer_base_name: str = ""
+        self.image_extent: tuple[float, float] | None = None  # (y_size, x_size) in µm
 
         self._mode_selector = RadioButtons(
             label="Mode",
@@ -137,6 +138,9 @@ class ROIAnnotator(Container):
         frame (i.e. image-relative world coordinates in µm, because the shapes
         layer translate matches the image layer translate). Tuples passed to
         Roi.from_values are (start, length).
+
+        Shapes are clipped to [0, image_extent] when image_extent is known.
+        ROIs that become empty after clipping are skipped with a warning.
         """
         rois = []
         skipped = 0
@@ -148,10 +152,26 @@ class ROIAnnotator(Container):
                 continue
 
             coords = np.array(shape_data)  # (4, 2): [[y0,x0], ...]
-            y_start = float(np.min(coords[:, 0]))
-            y_len = float(np.ptp(coords[:, 0]))
-            x_start = float(np.min(coords[:, 1]))
-            x_len = float(np.ptp(coords[:, 1]))
+            y_start_raw = float(np.min(coords[:, 0]))
+            y_end_raw = float(np.max(coords[:, 0]))
+            x_start_raw = float(np.min(coords[:, 1]))
+            x_end_raw = float(np.max(coords[:, 1]))
+
+            if self.image_extent is not None:
+                y_start = max(0.0, y_start_raw)
+                y_end = min(self.image_extent[0], y_end_raw)
+                x_start = max(0.0, x_start_raw)
+                x_end = min(self.image_extent[1], x_end_raw)
+            else:
+                y_start, y_end = y_start_raw, y_end_raw
+                x_start, x_end = x_start_raw, x_end_raw
+
+            y_len = y_end - y_start
+            x_len = x_end - x_start
+
+            if y_len <= 0 or x_len <= 0:
+                skipped += 1
+                continue
 
             roi = Roi.from_values(
                 slices={
@@ -166,8 +186,7 @@ class ROIAnnotator(Container):
 
         if skipped > 0:
             logger.warning(
-                "Skipped %d non-rectangle shape(s). "
-                "Only rectangles are written to the ROI table.",
+                "Skipped %d shape(s) (non-rectangle or outside image bounds).",
                 skipped,
             )
         return rois
@@ -302,6 +321,19 @@ class ROIAnnotatorImage(ROIAnnotator):
             )
             self.is_local = False
 
+        try:
+            container = open_ome_zarr_container(self.store, mode="r", cache=True)
+            img = container.get_image(path=container.level_paths[0])
+            axes = img.axes
+            y_idx = axes.index("y")
+            x_idx = axes.index("x")
+            self.image_extent = (
+                float(img.shape[y_idx] * img.pixel_size.y),
+                float(img.shape[x_idx] * img.pixel_size.x),
+            )
+        except Exception:  # noqa: BLE001
+            self.image_extent = None
+
         self._update_save_btn_state()
 
 
@@ -331,10 +363,14 @@ class ROIAnnotatorPlate(ROIAnnotator):
         self.layer_base_name = f"{row}{col}_"
         self.is_local = is_local
 
-        translation, _ = calculate_well_positions(
+        translation, bottom_right = calculate_well_positions(
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
         self.translation = (float(translation[0]), float(translation[1]))
+        self.image_extent = (
+            float(bottom_right[0] - translation[0]),
+            float(bottom_right[1] - translation[1]),
+        )
 
         self._zarr_picker.changed.connect(self._on_image_selected)
         zarr_images = sorted(self._get_available_images())

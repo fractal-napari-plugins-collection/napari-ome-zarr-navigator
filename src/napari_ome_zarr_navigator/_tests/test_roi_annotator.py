@@ -219,6 +219,76 @@ def test_shapes_to_rois_multiple(make_napari_viewer):
 
 
 # ---------------------------------------------------------------------------
+# Clipping to image bounds
+# ---------------------------------------------------------------------------
+
+
+def test_shapes_to_rois_clips_negative_start(make_napari_viewer):
+    """ROI with negative start is clipped to 0; length adjusted accordingly."""
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    annotator.image_extent = (100.0, 100.0)
+
+    # Rectangle from (-10, -5) to (20, 30) → clips to (0, 0)-(20, 30)
+    rect = np.array([[-10.0, -5.0], [-10.0, 30.0], [20.0, 30.0], [20.0, -5.0]])
+    shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
+
+    rois = annotator._shapes_to_rois(shapes_layer)
+    assert len(rois) == 1
+    assert rois[0]["x"].start == pytest.approx(0.0)
+    assert rois[0]["x"].length == pytest.approx(30.0)
+    assert rois[0]["y"].start == pytest.approx(0.0)
+    assert rois[0]["y"].length == pytest.approx(20.0)
+
+
+def test_shapes_to_rois_clips_far_edge(make_napari_viewer):
+    """ROI extending past image far edge is clipped to image_extent."""
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    annotator.image_extent = (50.0, 60.0)
+
+    # Rectangle from (30, 40) to (80, 90) → clips to (30, 40)-(50, 60)
+    rect = np.array([[30.0, 40.0], [30.0, 90.0], [80.0, 90.0], [80.0, 40.0]])
+    shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
+
+    rois = annotator._shapes_to_rois(shapes_layer)
+    assert len(rois) == 1
+    assert rois[0]["y"].start == pytest.approx(30.0)
+    assert rois[0]["y"].length == pytest.approx(20.0)  # 50 - 30
+    assert rois[0]["x"].start == pytest.approx(40.0)
+    assert rois[0]["x"].length == pytest.approx(20.0)  # 60 - 40
+
+
+def test_shapes_to_rois_skips_fully_outside(make_napari_viewer):
+    """ROI entirely outside image bounds is skipped."""
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    annotator.image_extent = (50.0, 50.0)
+
+    # Entirely below y=0
+    rect = np.array([[-30.0, 0.0], [-30.0, 10.0], [-10.0, 10.0], [-10.0, 0.0]])
+    shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
+
+    rois = annotator._shapes_to_rois(shapes_layer)
+    assert len(rois) == 0
+
+
+def test_shapes_to_rois_no_clipping_without_extent(make_napari_viewer):
+    """When image_extent is None, coordinates are passed through unchanged."""
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    assert annotator.image_extent is None
+
+    rect = np.array([[-5.0, -5.0], [-5.0, 200.0], [200.0, 200.0], [200.0, -5.0]])
+    shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
+
+    rois = annotator._shapes_to_rois(shapes_layer)
+    assert len(rois) == 1
+    assert rois[0]["x"].start == pytest.approx(-5.0)
+    assert rois[0]["x"].length == pytest.approx(205.0)
+
+
+# ---------------------------------------------------------------------------
 # End-to-end save
 # ---------------------------------------------------------------------------
 
