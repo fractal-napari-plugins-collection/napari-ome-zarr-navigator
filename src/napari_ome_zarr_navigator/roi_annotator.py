@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import napari
 import napari.layers
@@ -276,7 +277,14 @@ class ROIAnnotatorImage(ROIAnnotator):
         source: str = "File",
     ):
         self.zarr_selector = ZarrSelector()
-        super().__init__(viewer=viewer, extra_widgets=[self.zarr_selector])
+
+        extra: list = [self.zarr_selector]
+        if zarr_url:
+            self._info_label = Label(value=f"Image: {Path(zarr_url).name}")
+            self._info_label.tooltip = zarr_url
+            extra = [self._info_label] + extra
+
+        super().__init__(viewer=viewer, extra_widgets=extra)
         self.zarr_selector.on_change(self._on_selector_changed)
 
         if zarr_url:
@@ -358,7 +366,13 @@ class ROIAnnotatorPlate(ROIAnnotator):
         self.col = col
         self.plate_id = plate_id
 
-        super().__init__(viewer=viewer, extra_widgets=[self._zarr_picker])
+        plate_name = Path(str(plate_id)).name if plate_id else str(plate_store)
+        self._info_label = Label(value=f"Well: {row}{col}  |  {plate_name}")
+        self._info_label.tooltip = str(plate_id) if plate_id else str(plate_store)
+
+        super().__init__(
+            viewer=viewer, extra_widgets=[self._info_label, self._zarr_picker]
+        )
 
         self.layer_base_name = f"{row}{col}_"
         self.is_local = is_local
