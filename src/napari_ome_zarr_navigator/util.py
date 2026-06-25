@@ -157,7 +157,7 @@ class ZarrSelector(Container):
         self._main = Container(
             widgets=[Label(value=label), self._source_selector, self._stack]  # type: ignore[call-arg, arg-type]
         )
-        super().__init__(widgets=[self._main])
+        super().__init__(widgets=[self._main], labels=False)
 
         # Debounce
         self._timer = QTimer()

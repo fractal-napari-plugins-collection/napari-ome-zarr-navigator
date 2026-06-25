@@ -1,5 +1,4 @@
 import logging
-from contextlib import suppress
 from pathlib import Path
 
 import napari
@@ -55,8 +54,12 @@ class ROIAnnotator(Container):
         self._post_save_callbacks: list = []
         self._suppress_layer_refresh: bool = False
         self._image_is_3d: bool = False
+        self._image_is_time_series: bool = False
         self._shapes_ndim: int = 2
         self._shapes_z_scale: float = 1.0  # µm per z-voxel, used for 3D shapes layer
+        self._shapes_t_scale: float = (
+            1.0  # seconds per frame, used for time-resolved shapes layer
+        )
 
         self._mode_selector = RadioButtons(
             label="Mode",
@@ -159,7 +162,6 @@ class ROIAnnotator(Container):
         if self._mode_selector.value == _MODE_MASK:
             self.calculate_masking_roi_table()
         else:
-            self._shapes_ndim = 3 if self._image_is_3d else 2
             self.initialize_roi_layer()
 
     def _on_viewer_layers_changed(self, _=None):
@@ -276,49 +278,43 @@ class ROIAnnotator(Container):
         )
 
         ndim = data.ndim
+        is_3d = self._image_is_3d
+        is_time_series = self._image_is_time_series
 
-        # Use the OME-Zarr image metadata to distinguish zyx from tyx.
-        is_3d = False
-        if self.store is not None:
-            with suppress(Exception):
-                is_3d = open_ome_zarr_container(
-                    self.store,  # type: ignore[arg-type]
-                    mode="r",
-                    cache=True,
-                ).is_3d
+        # Validate dimensionality against stored metadata (yx=2, zyx=3, tyx=3, tzyx=4)
+        valid = (
+            (ndim == 2)
+            or (ndim == 3 and is_3d and not is_time_series)
+            or (ndim == 3 and not is_3d and is_time_series)
+            or (ndim == 4 and is_3d and is_time_series)
+        )
+        if not valid:
+            logger.warning("Label layer has unsupported dimensionality (%dD).", ndim)
+            return
 
-        if ndim == 2 or (ndim == 3 and not is_3d):
-            if ndim == 3:
-                data = data[0]  # tyx: take first time-frame
-            pixel_size = PixelSize(
-                x=float(label_layer.scale[-1]),
-                y=float(label_layer.scale[-2]),
-                z=1.0,
-            )
-            axes_order = ["y", "x"]
-        elif ndim == 3 and is_3d:
+        # Pixel size for the spatial (non-time) compute, read from the label layer's
+        # actual napari scale so it reflects the loaded resolution.
+        if is_3d:
             pixel_size = PixelSize(
                 z=float(label_layer.scale[-3]),
                 y=float(label_layer.scale[-2]),
                 x=float(label_layer.scale[-1]),
             )
-            axes_order = ["z", "y", "x"]
+            spatial_axes: list[str] = ["z", "y", "x"]
         else:
-            logger.warning("Label layer has unsupported dimensionality (%dD).", ndim)
-            return
-
-        try:
-            rois = compute_masking_roi(np.array(data), pixel_size, axes_order)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to compute masking ROIs: %s", exc)
-            return
+            pixel_size = PixelSize(
+                x=float(label_layer.scale[-1]),
+                y=float(label_layer.scale[-2]),
+                z=1.0,
+            )
+            spatial_axes = ["y", "x"]
 
         # Convert from label-local frame to image-local frame.
         # label.translate and self.translation are both in world µm.
         offset_y = float(label_layer.translate[-2]) - self.translation[0]
         offset_x = float(label_layer.translate[-1]) - self.translation[1]
 
-        self._shapes_ndim = 3 if is_3d else 2
+        # Keep z scale in sync with the label layer actually being used.
         self._shapes_z_scale = float(pixel_size.z)
         self.initialize_roi_layer()
         shapes_layer = next(
@@ -333,34 +329,73 @@ class ROIAnnotator(Container):
         if shapes_layer is None:
             return
 
+        n_t = data.shape[0] if is_time_series else 1
+
         rectangles = []
         label_ints = []
         z_starts: list[float] = []
         z_lengths: list[float] = []
-        for i, roi in enumerate(rois):
-            y_start = roi["y"].start
-            y_length = roi["y"].length
-            x_start = roi["x"].start
-            x_length = roi["x"].length
-            if (
-                y_start is None
-                or y_length is None
-                or x_start is None
-                or x_length is None
-            ):
-                continue
-            y_s = y_start + offset_y
-            y_e = y_s + y_length
-            x_s = x_start + offset_x
-            x_e = x_s + x_length
+        t_starts: list[float] = []
+        t_lengths: list[float] = []
 
-            if is_3d:
-                z_start_w = roi["z"].start or 0.0
-                z_len_w = roi["z"].length or pixel_size.z
-                # Place rectangle at z centroid voxel; extent stored in properties
-                z_voxel = (z_start_w + z_len_w / 2.0) / pixel_size.z
-                rectangles.append(
-                    np.array(
+        for t_idx in range(n_t):
+            frame_data = np.array(data[t_idx]) if is_time_series else np.array(data)
+            try:
+                frame_rois = compute_masking_roi(frame_data, pixel_size, spatial_axes)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to compute masking ROIs (t=%d): %s", t_idx, exc)
+                continue
+
+            for i, roi in enumerate(frame_rois):
+                y_start = roi["y"].start
+                y_length = roi["y"].length
+                x_start = roi["x"].start
+                x_length = roi["x"].length
+                if (
+                    y_start is None
+                    or y_length is None
+                    or x_start is None
+                    or x_length is None
+                ):
+                    continue
+                y_s = y_start + offset_y
+                y_e = y_s + y_length
+                x_s = x_start + offset_x
+                x_e = x_s + x_length
+
+                if is_3d:
+                    z_start_w = roi["z"].start or 0.0
+                    z_len_w = roi["z"].length or pixel_size.z
+                    # Place at z centroid voxel; true extent stored in properties
+                    z_voxel = (z_start_w + z_len_w / 2.0) / pixel_size.z
+                    z_starts.append(z_start_w)
+                    z_lengths.append(z_len_w)
+
+                if is_time_series:
+                    t_starts.append(t_idx * self._shapes_t_scale)
+                    t_lengths.append(self._shapes_t_scale)
+
+                # Build shape coordinate array for the appropriate ndim
+                if is_time_series and is_3d:
+                    rect = np.array(
+                        [
+                            [t_idx, z_voxel, y_s, x_s],
+                            [t_idx, z_voxel, y_s, x_e],
+                            [t_idx, z_voxel, y_e, x_e],
+                            [t_idx, z_voxel, y_e, x_s],
+                        ]
+                    )
+                elif is_time_series:
+                    rect = np.array(
+                        [
+                            [t_idx, y_s, x_s],
+                            [t_idx, y_s, x_e],
+                            [t_idx, y_e, x_e],
+                            [t_idx, y_e, x_s],
+                        ]
+                    )
+                elif is_3d:
+                    rect = np.array(
                         [
                             [z_voxel, y_s, x_s],
                             [z_voxel, y_s, x_e],
@@ -368,15 +403,11 @@ class ROIAnnotator(Container):
                             [z_voxel, y_e, x_s],
                         ]
                     )
-                )
-                z_starts.append(z_start_w)
-                z_lengths.append(z_len_w)
-            else:
-                rectangles.append(
-                    np.array([[y_s, x_s], [y_s, x_e], [y_e, x_e], [y_e, x_s]])
-                )
-            # Carry the integer label value so MaskingRoiTable gets correct indices
-            label_ints.append(roi.label if roi.label is not None else i)
+                else:
+                    rect = np.array([[y_s, x_s], [y_s, x_e], [y_e, x_e], [y_e, x_s]])
+
+                rectangles.append(rect)
+                label_ints.append(roi.label if roi.label is not None else i)
 
         if rectangles:
             shapes_layer.add_rectangles(rectangles)
@@ -386,12 +417,24 @@ class ROIAnnotator(Container):
             if is_3d:
                 props["z_start"] = np.array(z_starts, dtype=float)
                 props["z_length"] = np.array(z_lengths, dtype=float)
+            if is_time_series:
+                props["t_start"] = np.array(t_starts, dtype=float)
+                props["t_length"] = np.array(t_lengths, dtype=float)
             shapes_layer.properties = props  # type: ignore[assignment]
 
-        if rois:
-            logger.info(
-                "Found %d masking ROIs in label layer '%s'.", len(rois), layer_name
-            )
+        total = len(rectangles)
+        if total:
+            if is_time_series:
+                logger.info(
+                    "Found %d masking ROIs across %d time point(s) in label layer '%s'.",
+                    total,
+                    n_t,
+                    layer_name,
+                )
+            else:
+                logger.info(
+                    "Found %d masking ROIs in label layer '%s'.", total, layer_name
+                )
         else:
             logger.warning("No objects found in label layer '%s'.", layer_name)
 
@@ -420,13 +463,25 @@ class ROIAnnotator(Container):
             if isinstance(layer, napari.layers.Shapes) and layer.name == name:
                 self._viewer.layers.remove(layer)
 
-        ndim = self._shapes_ndim
-        if ndim == 3:
-            translate = (0.0, float(self.translation[0]), float(self.translation[1]))
+        ty = float(self.translation[0])
+        tx = float(self.translation[1])
+        if self._image_is_time_series and self._image_is_3d:
+            ndim = 4  # tzyx
+            translate = (0.0, 0.0, ty, tx)
+            scale = (self._shapes_t_scale, self._shapes_z_scale, 1.0, 1.0)
+        elif self._image_is_time_series:
+            ndim = 3  # tyx
+            translate = (0.0, ty, tx)
+            scale = (self._shapes_t_scale, 1.0, 1.0)
+        elif self._image_is_3d:
+            ndim = 3  # zyx
+            translate = (0.0, ty, tx)
             scale = (self._shapes_z_scale, 1.0, 1.0)
         else:
-            translate = (float(self.translation[0]), float(self.translation[1]))
+            ndim = 2  # yx
+            translate = (ty, tx)
             scale = None
+        self._shapes_ndim = ndim
 
         kw: dict = {
             "name": name,
@@ -459,6 +514,8 @@ class ROIAnnotator(Container):
         """
         z_starts_prop = shapes_layer.properties.get("z_start", None)
         z_lengths_prop = shapes_layer.properties.get("z_length", None)
+        t_starts_prop = shapes_layer.properties.get("t_start", None)
+        t_lengths_prop = shapes_layer.properties.get("t_length", None)
 
         rois = []
         skipped = 0
@@ -492,28 +549,48 @@ class ROIAnnotator(Container):
                 skipped += 1
                 continue
 
-            if shapes_layer.ndim == 3:
-                if z_starts_prop is not None and z_lengths_prop is not None:
-                    z_start = float(z_starts_prop[i])
-                    z_len = float(z_lengths_prop[i])
-                else:
-                    # User-drawn shape: vertex z IS the voxel the user was viewing
-                    z_scale = (
-                        float(shapes_layer.scale[-3])
-                        if len(shapes_layer.scale) >= 3
-                        else 1.0
-                    )
-                    z_start = float(coords[0, 0]) * z_scale
-                    z_len = z_scale
+            # Z: prefer stored properties; fall back to vertex coord when 3D
+            if z_starts_prop is not None and z_lengths_prop is not None:
+                z_start = float(z_starts_prop[i])
+                z_len = float(z_lengths_prop[i])
+            elif self._image_is_3d:
+                # scale[-3] is z for both zyx (ndim=3) and tzyx (ndim=4)
+                z_scale = (
+                    float(shapes_layer.scale[-3])
+                    if len(shapes_layer.scale) >= 3
+                    else 1.0
+                )
+                z_start = float(coords[0, -3]) * z_scale
+                z_len = z_scale
             else:
                 z_start, z_len = 0.0, 1.0
 
+            # T: prefer stored properties; fall back to vertex coord when time-resolved
+            if t_starts_prop is not None and t_lengths_prop is not None:
+                t_start: float | None = float(t_starts_prop[i])
+                t_len: float | None = float(t_lengths_prop[i])
+            elif self._image_is_time_series:
+                t_scale = (
+                    float(shapes_layer.scale[0])
+                    if len(shapes_layer.scale) >= 1
+                    else 1.0
+                )
+                t_start = float(coords[0, 0]) * t_scale
+                t_len = t_scale
+            else:
+                t_start = None
+                t_len = None
+
+            slices: dict = {
+                "x": (x_start, x_len),
+                "y": (y_start, y_len),
+                "z": (z_start, z_len),
+            }
+            if t_start is not None:
+                slices["t"] = (t_start, t_len)
+
             roi = Roi.from_values(
-                slices={
-                    "x": (x_start, x_len),
-                    "y": (y_start, y_len),
-                    "z": (z_start, z_len),
-                },
+                slices=slices,
                 name=f"roi_{len(rois)}",
                 space="world",
             )
@@ -644,7 +721,9 @@ class ROIAnnotator(Container):
         label_ints_prop = shapes_layer.properties.get("label_int", None)
         z_starts_prop = shapes_layer.properties.get("z_start", None)
         z_lengths_prop = shapes_layer.properties.get("z_length", None)
-        z_scale = float(shapes_layer.scale[-3]) if shapes_layer.ndim == 3 else 1.0
+        t_starts_prop = shapes_layer.properties.get("t_start", None)
+        t_lengths_prop = shapes_layer.properties.get("t_length", None)
+        z_scale = float(shapes_layer.scale[-3]) if shapes_layer.ndim >= 3 else 1.0
 
         rois = []
         skipped = 0
@@ -688,13 +767,17 @@ class ROIAnnotator(Container):
             else:
                 z_start, z_len = 0.0, 1.0
 
+            slices: dict = {
+                "x": (x_start, x_len),
+                "y": (y_start, y_len),
+                "z": (z_start, z_len),
+            }
+            if t_starts_prop is not None and t_lengths_prop is not None:
+                slices["t"] = (float(t_starts_prop[i]), float(t_lengths_prop[i]))
+
             label_int = int(label_ints_prop[i]) if label_ints_prop is not None else i
             roi = Roi.from_values(
-                slices={
-                    "x": (x_start, x_len),
-                    "y": (y_start, y_len),
-                    "z": (z_start, z_len),
-                },
+                slices=slices,
                 name=str(label_int),
                 label=label_int,
                 space="world",
@@ -786,6 +869,7 @@ class ROIAnnotatorImage(ROIAnnotator):
         try:
             container = open_ome_zarr_container(self.store, mode="r", cache=True)
             self._image_is_3d = container.is_3d
+            self._image_is_time_series = container.is_time_series
             img = container.get_image(path=container.level_paths[0])
             axes = img.axes
             y_idx = axes.index("y")
@@ -795,10 +879,15 @@ class ROIAnnotatorImage(ROIAnnotator):
                 float(img.shape[x_idx] * img.pixel_size.x),
             )
             self._shapes_z_scale = float(img.pixel_size.z) if self._image_is_3d else 1.0
+            self._shapes_t_scale = (
+                float(img.pixel_size.t) if self._image_is_time_series else 1.0
+            )
         except Exception:  # noqa: BLE001
             self.image_extent = None
             self._image_is_3d = False
+            self._image_is_time_series = False
             self._shapes_z_scale = 1.0
+            self._shapes_t_scale = 1.0
 
         if self._mode_selector.value == _MODE_MASK:
             self._refresh_reference_label_picker()
@@ -874,14 +963,23 @@ class ROIAnnotatorPlate(ROIAnnotator):
                 cache=True,
             )
             self._image_is_3d = container.is_3d
-            if self._image_is_3d:
+            self._image_is_time_series = container.is_time_series
+            if self._image_is_3d or self._image_is_time_series:
                 img = container.get_image()
-                self._shapes_z_scale = float(img.pixel_size.z)
+                self._shapes_z_scale = (
+                    float(img.pixel_size.z) if self._image_is_3d else 1.0
+                )
+                self._shapes_t_scale = (
+                    float(img.pixel_size.t) if self._image_is_time_series else 1.0
+                )
             else:
                 self._shapes_z_scale = 1.0
+                self._shapes_t_scale = 1.0
         except Exception:  # noqa: BLE001
             self._image_is_3d = False
+            self._image_is_time_series = False
             self._shapes_z_scale = 1.0
+            self._shapes_t_scale = 1.0
         if self._mode_selector.value == _MODE_MASK:
             self._refresh_reference_label_picker()
         self._update_save_btn_state()
