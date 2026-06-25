@@ -163,6 +163,8 @@ class ROIAnnotator(Container):
             QTimer.singleShot(0, self._refresh_label_layer_picker)
 
     def _refresh_label_layer_picker(self):
+        if self._suppress_layer_refresh:
+            return
         current = self._label_layer_picker.value
         layers = [
             layer.name
@@ -232,7 +234,19 @@ class ROIAnnotator(Container):
                 return suffix
         return None
 
+    def _release_calculate_suppress(self):
+        self._suppress_layer_refresh = False
+        if self._mode_selector.value == _MODE_MASK:
+            self._refresh_label_layer_picker()
+
     def calculate_masking_roi_table(self):
+        self._suppress_layer_refresh = True
+        try:
+            self._calculate_masking_roi_table_inner()
+        finally:
+            QTimer.singleShot(0, self._release_calculate_suppress)
+
+    def _calculate_masking_roi_table_inner(self):
         layer_name = self._label_layer_picker.value
         if not layer_name or layer_name == "(no label layers)":
             logger.warning("No label layer selected.")
@@ -351,27 +365,23 @@ class ROIAnnotator(Container):
             self._save_btn.tooltip = ""
 
     def initialize_roi_layer(self):
-        self._suppress_layer_refresh = True
-        try:
-            name = self._shapes_layer_name
-            for layer in list(self._viewer.layers):
-                if isinstance(layer, napari.layers.Shapes) and layer.name == name:
-                    self._viewer.layers.remove(layer)
+        name = self._shapes_layer_name
+        for layer in list(self._viewer.layers):
+            if isinstance(layer, napari.layers.Shapes) and layer.name == name:
+                self._viewer.layers.remove(layer)
 
-            translate = (float(self.translation[0]), float(self.translation[1]))
-            shapes_layer = self._viewer.add_shapes(
-                name=name,
-                ndim=2,
-                translate=translate,
-                edge_color="red",
-                face_color="transparent",
-                edge_width=3,
-            )
+        translate = (float(self.translation[0]), float(self.translation[1]))
+        shapes_layer = self._viewer.add_shapes(
+            name=name,
+            ndim=2,
+            translate=translate,
+            edge_color="red",
+            face_color="transparent",
+            edge_width=3,
+        )
 
-            self._viewer.layers.selection.active = shapes_layer
-            shapes_layer.mode = "add_rectangle"
-        finally:
-            self._suppress_layer_refresh = False
+        self._viewer.layers.selection.active = shapes_layer
+        shapes_layer.mode = "add_rectangle"
 
     def _shapes_to_rois(self, shapes_layer: napari.layers.Shapes) -> list[Roi]:
         """Convert rectangle shapes to ngio Roi objects.
