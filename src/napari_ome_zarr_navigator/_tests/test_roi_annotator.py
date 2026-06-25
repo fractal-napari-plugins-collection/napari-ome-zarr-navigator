@@ -172,7 +172,7 @@ def test_shapes_to_rois_basic(make_napari_viewer):
     )
     shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 1
     roi = rois[0]
     assert roi.name == "roi_0"
@@ -213,7 +213,7 @@ def test_shapes_to_rois_skips_non_rectangles(make_napari_viewer):
     shapes_layer.add_ellipses([ellipse])
     shapes_layer.add_rectangles([rect])
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 1
     assert rois[0].name == "roi_0"
 
@@ -228,7 +228,7 @@ def test_shapes_to_rois_multiple(make_napari_viewer):
     ]
     shapes_layer = viewer.add_shapes(rects, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 2
     assert rois[0].name == "roi_0"
     assert rois[1].name == "roi_1"
@@ -249,7 +249,7 @@ def test_shapes_to_rois_clips_negative_start(make_napari_viewer):
     rect = np.array([[-10.0, -5.0], [-10.0, 30.0], [20.0, 30.0], [20.0, -5.0]])
     shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 1
     assert rois[0]["x"].start == pytest.approx(0.0)
     assert rois[0]["x"].length == pytest.approx(30.0)
@@ -267,7 +267,7 @@ def test_shapes_to_rois_clips_far_edge(make_napari_viewer):
     rect = np.array([[30.0, 40.0], [30.0, 90.0], [80.0, 90.0], [80.0, 40.0]])
     shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 1
     assert rois[0]["y"].start == pytest.approx(30.0)
     assert rois[0]["y"].length == pytest.approx(20.0)  # 50 - 30
@@ -285,7 +285,7 @@ def test_shapes_to_rois_skips_fully_outside(make_napari_viewer):
     rect = np.array([[-30.0, 0.0], [-30.0, 10.0], [-10.0, 10.0], [-10.0, 0.0]])
     shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 0
 
 
@@ -298,7 +298,7 @@ def test_shapes_to_rois_no_clipping_without_extent(make_napari_viewer):
     rect = np.array([[-5.0, -5.0], [-5.0, 200.0], [200.0, 200.0], [200.0, -5.0]])
     shapes_layer = viewer.add_shapes(rect, shape_type="rectangle", name="ROIs")
 
-    rois = annotator._shapes_to_rois(shapes_layer)
+    rois, _ = annotator._shapes_to_rois(shapes_layer)
     assert len(rois) == 1
     assert rois[0]["x"].start == pytest.approx(-5.0)
     assert rois[0]["x"].length == pytest.approx(205.0)

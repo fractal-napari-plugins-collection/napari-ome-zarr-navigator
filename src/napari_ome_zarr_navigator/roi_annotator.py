@@ -341,9 +341,14 @@ class ROIAnnotator(Container):
 
         if rectangles:
             shapes_layer.add_rectangles(rectangles)
-            shapes_layer.properties = {"label_int": np.array(label_ints, dtype=int)}
+            shapes_layer.properties = {"label_int": np.array(label_ints, dtype=int)}  # type: ignore[assignment]
 
-        logger.info("Found %d masking ROIs in label layer '%s'.", len(rois), layer_name)
+        if rois:
+            logger.info(
+                "Found %d masking ROIs in label layer '%s'.", len(rois), layer_name
+            )
+        else:
+            logger.warning("No objects found in label layer '%s'.", layer_name)
 
     @property
     def _shapes_layer_name(self) -> str:
@@ -383,7 +388,9 @@ class ROIAnnotator(Container):
         self._viewer.layers.selection.active = shapes_layer
         shapes_layer.mode = "add_rectangle"
 
-    def _shapes_to_rois(self, shapes_layer: napari.layers.Shapes) -> list[Roi]:
+    def _shapes_to_rois(
+        self, shapes_layer: napari.layers.Shapes
+    ) -> tuple[list[Roi], int]:
         """Convert rectangle shapes to ngio Roi objects.
 
         shapes.data[i] contains 4 corner points in the layer's local coordinate
@@ -392,7 +399,8 @@ class ROIAnnotator(Container):
         Roi.from_values are (start, length).
 
         Shapes are clipped to [0, image_extent] when image_extent is known.
-        ROIs that become empty after clipping are skipped with a warning.
+        ROIs that become empty after clipping are skipped; the count is returned
+        so callers can include it in a single consolidated log message.
         """
         rois = []
         skipped = 0
@@ -436,12 +444,7 @@ class ROIAnnotator(Container):
             )
             rois.append(roi)
 
-        if skipped > 0:
-            logger.warning(
-                "Skipped %d shape(s) (non-rectangle or outside image bounds).",
-                skipped,
-            )
-        return rois
+        return rois, skipped
 
     def save_roi_table(self):
         if self._mode_selector.value == _MODE_MASK:
@@ -488,9 +491,9 @@ class ROIAnnotator(Container):
         # a cryptic zarr read-only error.  cache=False on both opens avoids the
         # cached read-only container being returned for the append open.
         existing_tables = open_ome_zarr_container(
-            self.store,
+            self.store,  # type: ignore[arg-type]
             mode="r",
-            cache=False,  # type: ignore[arg-type]
+            cache=False,
         ).list_tables()
         if table_name in existing_tables and not overwrite:
             logger.warning(
@@ -509,7 +512,6 @@ class ROIAnnotator(Container):
                 backend=backend,
                 overwrite=overwrite,
             )
-            logger.info("Saved table '%s'.", table_name)
             for cb in self._post_save_callbacks:
                 cb()
             return True
@@ -523,14 +525,24 @@ class ROIAnnotator(Container):
     def _save_shapes_roi_table(self):
         shapes_layer = self._get_shapes_layer_for_save()
         if shapes_layer is None:
-            logger.warning("No shapes layer found. Cannot save ROI table.")
             return
-        rois = self._shapes_to_rois(shapes_layer)
+        rois, skipped = self._shapes_to_rois(shapes_layer)
         if not rois:
             logger.warning("No valid rectangles found. Only rectangles are supported.")
             return
-        logger.info("Saving %d ROI(s) as ROI table.", len(rois))
-        self._do_save_table(RoiTable(rois=rois))
+        table_name = self._table_name.value.strip()
+        if not self._do_save_table(RoiTable(rois=rois)):
+            return
+        if skipped:
+            logger.warning(
+                "Saved %d ROI(s) to table '%s'; %d shape(s) skipped"
+                " (not rectangles or out of bounds).",
+                len(rois),
+                table_name,
+                skipped,
+            )
+        else:
+            logger.info("Saved %d ROI(s) to table '%s'.", len(rois), table_name)
 
     def _save_shapes_masking_roi_table(self):
         shapes_layer = self._get_shapes_layer_for_save()
@@ -595,16 +607,23 @@ class ROIAnnotator(Container):
             )
             rois.append(roi)
 
-        if skipped > 0:
-            logger.warning(
-                "Skipped %d shape(s) (non-rectangle or outside image bounds).", skipped
-            )
         if not rois:
             logger.warning("No valid rectangles found. Only rectangles are supported.")
             return
 
-        logger.info("Saving %d ROI(s) as masking ROI table.", len(rois))
-        self._do_save_table(MaskingRoiTable(rois=rois, reference_label=ref))
+        table_name = self._table_name.value.strip()
+        if not self._do_save_table(MaskingRoiTable(rois=rois, reference_label=ref)):
+            return
+        if skipped:
+            logger.warning(
+                "Saved %d masking ROI(s) to table '%s'; %d shape(s) skipped"
+                " (not rectangles or out of bounds).",
+                len(rois),
+                table_name,
+                skipped,
+            )
+        else:
+            logger.info("Saved %d masking ROI(s) to table '%s'.", len(rois), table_name)
 
 
 class ROIAnnotatorImage(ROIAnnotator):
