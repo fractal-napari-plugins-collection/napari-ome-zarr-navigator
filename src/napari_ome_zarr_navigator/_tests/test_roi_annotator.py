@@ -97,12 +97,28 @@ def test_initialize_roi_layer_translation(make_napari_viewer):
 # ---------------------------------------------------------------------------
 
 
-def test_mode_2_reverts_to_mode_1(make_napari_viewer):
+def test_mask_mode_shows_label_picker(make_napari_viewer):
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    # In headless mode visible is always False; isHidden() is the reliable check
+    assert annotator._label_layer_picker.native.isHidden()
+
+    annotator._mode_selector.value = _MODE_MASK
+
+    assert annotator._mode_selector.value == _MODE_MASK
+    assert not annotator._label_layer_picker.native.isHidden()
+    assert annotator._init_layer_btn.text == "Calculate masking ROI table"
+
+
+def test_mask_mode_reverts_on_empty(make_napari_viewer):
     viewer = make_napari_viewer()
     annotator = ROIAnnotator(viewer)
     annotator._mode_selector.value = _MODE_MASK
-    # Should have been reverted
-    assert annotator._mode_selector.value == _MODE_EMPTY
+    annotator._mode_selector.value = _MODE_EMPTY
+
+    assert annotator._label_layer_picker.native.isHidden()
+    assert annotator._init_layer_btn.text == "Initialize ROI Layer"
+    assert annotator._table_name.value == "interactive_ROIs"
 
 
 # ---------------------------------------------------------------------------
