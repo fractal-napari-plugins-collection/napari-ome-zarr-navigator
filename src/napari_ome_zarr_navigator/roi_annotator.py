@@ -8,6 +8,7 @@ from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
+    FileEdit,
     Label,
     LineEdit,
     PushButton,
@@ -16,7 +17,7 @@ from magicgui.widgets import (
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.common import Roi, compute_masking_roi
 from ngio.ome_zarr_meta import PixelSize
-from ngio.tables import MaskingRoiTable, RoiTable
+from ngio.tables import MaskingRoiTable, RoiTable, open_tables_container
 from ngio.utils import StoreOrGroup, fractal_fsspec_store
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
@@ -110,13 +111,22 @@ class ROIAnnotator(Container):
         )
         self._backend_picker.tooltip = "ngio table backend to store the ROI table in"
         self._overwrite_box = CheckBox(value=False, text="Overwrite existing table")
+        self._remote_save_folder = FileEdit(
+            label="Save to folder",
+            mode="d",  # type: ignore[arg-type]
+            tooltip=(
+                "The plugin cannot write back to remote OME-Zarr stores. "
+                "Choose a local folder to save the ROI table instead."
+            ),
+        )
+        self._remote_save_folder.hide()
         self._save_btn = PushButton(text="Save ROI Table", enabled=False)
-        # FIXME: Update tooltip when adding remote Zarr support
-        self._save_btn.tooltip = "Select a local Zarr image to enable saving"
+        self._save_btn.tooltip = "Select a Zarr image to enable saving"
 
         self._mode_selector.changed.connect(self._on_mode_changed)
         self._init_layer_btn.clicked.connect(self._on_main_btn_clicked)
         self._save_btn.clicked.connect(self.save_roi_table)
+        self._remote_save_folder.changed.connect(self._update_save_btn_state)
         self._viewer.layers.events.inserted.connect(self._on_viewer_layers_changed)
         self._viewer.layers.events.removed.connect(self._on_viewer_layers_changed)
 
@@ -130,6 +140,7 @@ class ROIAnnotator(Container):
             self._table_name,
             self._backend_picker,
             self._overwrite_box,
+            self._remote_save_folder,
             self._save_btn,
         ]
         if extra_widgets:
@@ -281,11 +292,12 @@ class ROIAnnotator(Container):
         is_3d = self._image_is_3d
         is_time_series = self._image_is_time_series
 
-        # Validate dimensionality against stored metadata (yx=2, zyx=3, tyx=3, tzyx=4)
+        # Validate dimensionality against stored metadata:
+        #   yx=2, zyx=3, tyx=3, singleton-z-yx=3 (e.g. (1,64,64)), tzyx=4
         valid = (
             (ndim == 2)
             or (ndim == 3 and is_3d and not is_time_series)
-            or (ndim == 3 and not is_3d and is_time_series)
+            or (ndim == 3 and not is_3d)  # tyx or singleton-z yx
             or (ndim == 4 and is_3d and is_time_series)
         )
         if not valid:
@@ -329,7 +341,13 @@ class ROIAnnotator(Container):
         if shapes_layer is None:
             return
 
-        n_t = data.shape[0] if is_time_series else 1
+        if is_time_series:
+            n_t = data.shape[0]
+        elif ndim == 3 and not is_3d:
+            data = data[0]  # strip singleton leading axis (e.g. (1, Y, X) → (Y, X))
+            n_t = 1
+        else:
+            n_t = 1
 
         rectangles = []
         label_ints = []
@@ -443,19 +461,24 @@ class ROIAnnotator(Container):
         return f"{self.layer_base_name}ROIs"
 
     def _update_save_btn_state(self):
-        enabled = bool(self.is_local and self.store is not None)
-        self._save_btn.enabled = enabled
-        if not self.is_local:
-            # FIXME: Update tooltip when adding remote Zarr support
-            self._save_btn.tooltip = (
-                "Saving is only supported for local (file) Zarr stores. "
-                "HTTP stores are read-only."
-            )
-        elif self.store is None:
-            # FIXME: Update tooltip when adding remote Zarr support
-            self._save_btn.tooltip = "Select a local Zarr image to enable saving"
-        else:
+        if self.store is None:
+            self._save_btn.enabled = False
+            self._remote_save_folder.hide()
+            self._save_btn.tooltip = "Select a Zarr image to enable saving"
+        elif self.is_local:
+            self._remote_save_folder.hide()
+            self._save_btn.enabled = True
             self._save_btn.tooltip = ""
+        else:
+            self._remote_save_folder.show()
+            folder = str(self._remote_save_folder.value)
+            folder_chosen = bool(folder and folder != ".")
+            self._save_btn.enabled = folder_chosen
+            self._save_btn.tooltip = (
+                ""
+                if folder_chosen
+                else "Choose a local folder above to save the ROI table"
+            )
 
     def initialize_roi_layer(self):
         name = self._shapes_layer_name
@@ -498,6 +521,73 @@ class ROIAnnotator(Container):
         self._viewer.layers.selection.active = shapes_layer
         shapes_layer.mode = "add_rectangle"
 
+    def _extract_shape_coords(
+        self,
+        index: int,
+        shape_data,
+        shapes_layer: napari.layers.Shapes,
+        z_starts_prop,
+        z_lengths_prop,
+        t_starts_prop,
+        t_lengths_prop,
+    ) -> (
+        tuple[float, float, float, float, float, float, float | None, float | None]
+        | None
+    ):
+        """Extract clipped spatial coords + z/t extent for one shape.
+
+        Returns (x_s, x_len, y_s, y_len, z_s, z_len, t_s, t_len) or None when
+        the shape is degenerate after clipping to image_extent.
+        """
+        coords = np.array(shape_data)
+        y_start_raw = float(np.min(coords[:, -2]))
+        y_end_raw = float(np.max(coords[:, -2]))
+        x_start_raw = float(np.min(coords[:, -1]))
+        x_end_raw = float(np.max(coords[:, -1]))
+
+        if self.image_extent is not None:
+            y_start = max(0.0, y_start_raw)
+            y_end = min(self.image_extent[0], y_end_raw)
+            x_start = max(0.0, x_start_raw)
+            x_end = min(self.image_extent[1], x_end_raw)
+        else:
+            y_start, y_end = y_start_raw, y_end_raw
+            x_start, x_end = x_start_raw, x_end_raw
+
+        y_len = y_end - y_start
+        x_len = x_end - x_start
+        if y_len <= 0 or x_len <= 0:
+            return None
+
+        # Z: prefer stored properties; fall back to vertex coord when 3D
+        if z_starts_prop is not None and z_lengths_prop is not None:
+            z_start = float(z_starts_prop[index])
+            z_len = float(z_lengths_prop[index])
+        elif self._image_is_3d:
+            z_scale = (
+                float(shapes_layer.scale[-3]) if len(shapes_layer.scale) >= 3 else 1.0
+            )
+            z_start = float(coords[0, -3]) * z_scale
+            z_len = z_scale
+        else:
+            z_start, z_len = 0.0, 1.0
+
+        # T: prefer stored properties; fall back to vertex coord when time-resolved
+        if t_starts_prop is not None and t_lengths_prop is not None:
+            t_start: float | None = float(t_starts_prop[index])
+            t_len: float | None = float(t_lengths_prop[index])
+        elif self._image_is_time_series:
+            t_scale = (
+                float(shapes_layer.scale[0]) if len(shapes_layer.scale) >= 1 else 1.0
+            )
+            t_start = float(coords[0, 0]) * t_scale
+            t_len = t_scale
+        else:
+            t_start = None
+            t_len = None
+
+        return x_start, x_len, y_start, y_len, z_start, z_len, t_start, t_len
+
     def _shapes_to_rois(
         self, shapes_layer: napari.layers.Shapes
     ) -> tuple[list[Roi], int]:
@@ -526,61 +616,20 @@ class ROIAnnotator(Container):
                 skipped += 1
                 continue
 
-            coords = np.array(shape_data)  # (4, ndim): [[y0,x0], ...] or [[z,y,x], ...]
-            # Use -2/-1 so this works for both ndim=2 (yx) and ndim=3 (zyx)
-            y_start_raw = float(np.min(coords[:, -2]))
-            y_end_raw = float(np.max(coords[:, -2]))
-            x_start_raw = float(np.min(coords[:, -1]))
-            x_end_raw = float(np.max(coords[:, -1]))
-
-            if self.image_extent is not None:
-                y_start = max(0.0, y_start_raw)
-                y_end = min(self.image_extent[0], y_end_raw)
-                x_start = max(0.0, x_start_raw)
-                x_end = min(self.image_extent[1], x_end_raw)
-            else:
-                y_start, y_end = y_start_raw, y_end_raw
-                x_start, x_end = x_start_raw, x_end_raw
-
-            y_len = y_end - y_start
-            x_len = x_end - x_start
-
-            if y_len <= 0 or x_len <= 0:
+            result = self._extract_shape_coords(
+                i,
+                shape_data,
+                shapes_layer,
+                z_starts_prop,
+                z_lengths_prop,
+                t_starts_prop,
+                t_lengths_prop,
+            )
+            if result is None:
                 skipped += 1
                 continue
 
-            # Z: prefer stored properties; fall back to vertex coord when 3D
-            if z_starts_prop is not None and z_lengths_prop is not None:
-                z_start = float(z_starts_prop[i])
-                z_len = float(z_lengths_prop[i])
-            elif self._image_is_3d:
-                # scale[-3] is z for both zyx (ndim=3) and tzyx (ndim=4)
-                z_scale = (
-                    float(shapes_layer.scale[-3])
-                    if len(shapes_layer.scale) >= 3
-                    else 1.0
-                )
-                z_start = float(coords[0, -3]) * z_scale
-                z_len = z_scale
-            else:
-                z_start, z_len = 0.0, 1.0
-
-            # T: prefer stored properties; fall back to vertex coord when time-resolved
-            if t_starts_prop is not None and t_lengths_prop is not None:
-                t_start: float | None = float(t_starts_prop[i])
-                t_len: float | None = float(t_lengths_prop[i])
-            elif self._image_is_time_series:
-                t_scale = (
-                    float(shapes_layer.scale[0])
-                    if len(shapes_layer.scale) >= 1
-                    else 1.0
-                )
-                t_start = float(coords[0, 0]) * t_scale
-                t_len = t_scale
-            else:
-                t_start = None
-                t_len = None
-
+            x_start, x_len, y_start, y_len, z_start, z_len, t_start, t_len = result
             slices: dict = {
                 "x": (x_start, x_len),
                 "y": (y_start, y_len),
@@ -609,11 +658,6 @@ class ROIAnnotator(Container):
         if self.store is None:
             logger.warning("No Zarr store set. Cannot save ROI table.")
             return None
-        if not self.is_local:
-            logger.warning(
-                "Saving ROI tables is only supported for local (file) stores."
-            )
-            return None
         name = self._shapes_layer_name
         matching = [
             layer
@@ -632,7 +676,13 @@ class ROIAnnotator(Container):
         return shapes_layer
 
     def _do_save_table(self, table) -> bool:
-        """Write table to zarr, fire post-save callbacks. Returns True on success."""
+        """Dispatch to local or remote save. Returns True on success."""
+        return (
+            self._do_save_local(table) if self.is_local else self._do_save_remote(table)
+        )
+
+    def _do_save_local(self, table) -> bool:
+        """Write table into the local OME-Zarr container."""
         table_name = self._table_name.value.strip()
         if not table_name:
             logger.warning("Table name cannot be empty.")
@@ -664,6 +714,34 @@ class ROIAnnotator(Container):
                 backend=backend,
                 overwrite=overwrite,
             )
+            for cb in self._post_save_callbacks:
+                cb()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to save table: %s", exc)
+            return False
+        finally:
+            self._save_btn.text = "Save ROI Table"
+            self._update_save_btn_state()
+
+    def _do_save_remote(self, table) -> bool:
+        """Write table to a user-chosen local folder (remote store is read-only)."""
+        table_name = self._table_name.value.strip()
+        if not table_name:
+            logger.warning("Table name cannot be empty.")
+            return False
+        folder = str(self._remote_save_folder.value)
+        if not folder or folder == ".":
+            logger.warning("Select a local folder to save the ROI table.")
+            return False
+        backend = _BACKEND_MAP[self._backend_picker.value]
+        dest = str(Path(folder) / table_name)
+        self._save_btn.enabled = False
+        self._save_btn.text = "Saving..."
+        try:
+            tc = open_tables_container(dest, mode="w")
+            tc.add(table_name, table, backend=backend, overwrite=True)
+            logger.info("Saved ROI table to '%s'.", dest)
             for cb in self._post_save_callbacks:
                 cb()
             return True
@@ -723,7 +801,6 @@ class ROIAnnotator(Container):
         z_lengths_prop = shapes_layer.properties.get("z_length", None)
         t_starts_prop = shapes_layer.properties.get("t_start", None)
         t_lengths_prop = shapes_layer.properties.get("t_length", None)
-        z_scale = float(shapes_layer.scale[-3]) if shapes_layer.ndim >= 3 else 1.0
 
         rois = []
         skipped = 0
@@ -734,46 +811,27 @@ class ROIAnnotator(Container):
                 skipped += 1
                 continue
 
-            coords = np.array(shape_data)
-            # Use -2/-1 so this works for both ndim=2 (yx) and ndim=3 (zyx)
-            y_start_raw = float(np.min(coords[:, -2]))
-            y_end_raw = float(np.max(coords[:, -2]))
-            x_start_raw = float(np.min(coords[:, -1]))
-            x_end_raw = float(np.max(coords[:, -1]))
-
-            if self.image_extent is not None:
-                y_start = max(0.0, y_start_raw)
-                y_end = min(self.image_extent[0], y_end_raw)
-                x_start = max(0.0, x_start_raw)
-                x_end = min(self.image_extent[1], x_end_raw)
-            else:
-                y_start, y_end = y_start_raw, y_end_raw
-                x_start, x_end = x_start_raw, x_end_raw
-
-            y_len = y_end - y_start
-            x_len = x_end - x_start
-            if y_len <= 0 or x_len <= 0:
+            result = self._extract_shape_coords(
+                i,
+                shape_data,
+                shapes_layer,
+                z_starts_prop,
+                z_lengths_prop,
+                t_starts_prop,
+                t_lengths_prop,
+            )
+            if result is None:
                 skipped += 1
                 continue
 
-            # Recover z extent: prefer stored properties (masking ROI path),
-            # fall back to shape vertex z for user-drawn 3D shapes.
-            if z_starts_prop is not None and z_lengths_prop is not None:
-                z_start = float(z_starts_prop[i])
-                z_len = float(z_lengths_prop[i])
-            elif shapes_layer.ndim == 3:
-                z_start = float(coords[0, 0]) * z_scale
-                z_len = z_scale
-            else:
-                z_start, z_len = 0.0, 1.0
-
+            x_start, x_len, y_start, y_len, z_start, z_len, t_start, t_len = result
             slices: dict = {
                 "x": (x_start, x_len),
                 "y": (y_start, y_len),
                 "z": (z_start, z_len),
             }
-            if t_starts_prop is not None and t_lengths_prop is not None:
-                slices["t"] = (float(t_starts_prop[i]), float(t_lengths_prop[i]))
+            if t_start is not None:
+                slices["t"] = (t_start, t_len)
 
             label_int = int(label_ints_prop[i]) if label_ints_prop is not None else i
             roi = Roi.from_values(
