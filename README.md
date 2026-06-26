@@ -50,7 +50,8 @@ The ROI Annotator can be launched from napari's *Plugins* menu (standalone, for 
 
 Draw rectangular ROIs by hand on any loaded image. Select **Initialize empty ROI layer**, click **Initialize ROI Layer** to create a shapes layer in drawing mode, then draw rectangles. The table name, backend (CSV, JSON, Parquet, AnnData), and overwrite flag can all be configured before saving. Only rectangle annotations are supported.
 
-<!-- TODO: add screenshot of interactive ROI annotation -->
+<img width="1726" alt="interactive_roi_table_creation" src="https://github.com/user-attachments/assets/c91c7496-27a2-4236-a8bd-c13c5002070b" />
+
 
 > **Limitations (napari shapes layer)**
 > - Interactively drawn ROIs are always 2D — napari shapes cannot represent 3D extents.
@@ -60,7 +61,8 @@ Draw rectangular ROIs by hand on any loaded image. Select **Initialize empty ROI
 
 Select **Masking ROI layer**, choose a label layer that has been loaded into the viewer for a given OME-Zarr image (e.g. loaded by the ROI loader above), and click **Calculate masking ROI table**. The annotator computes one bounding-box ROI per labelled object using [ngio's `compute_masking_roi`](https://biovisioncenter.github.io/ngio/stable/) and adds the results as a shapes layer for review. Z-extents are inferred from the label data and stored as shape properties; 3D bounding boxes are supported when the image is 3D. Clicking **Save ROI Table** writes the result as a [Masking ROI table](https://biovisioncenter.github.io/ngio/stable/table_specs/table_types/masking_roi_table/) to the OME-Zarr, if a corresponding label is available.
 
-<!-- TODO: add screenshot of masking ROI table creation -->
+<img width="1726" alt="masking_roi_table_creation" src="https://github.com/user-attachments/assets/0caeea55-f080-4b19-b5e8-da89d6ddf8c2" />
+
 
 #### Remote OME-Zarr stores
 
