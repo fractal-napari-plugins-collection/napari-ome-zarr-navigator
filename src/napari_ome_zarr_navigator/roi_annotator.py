@@ -981,6 +981,8 @@ class ROIAnnotatorPlate(ROIAnnotator):
         self.row = row
         self.col = col
         self.plate_id = plate_id
+        self.plate_browser = plate_browser
+        self.is_plate = is_plate
 
         plate_name = Path(str(plate_id)).name if plate_id else str(plate_store)
         self._info_label = Label(value=f"Well: {row}{col}  |  {plate_name}")
@@ -1008,6 +1010,38 @@ class ROIAnnotatorPlate(ROIAnnotator):
         self._zarr_picker._default_choices = zarr_images
         if zarr_images:
             self._on_image_selected()
+
+        self._btn_launch_loader = PushButton(text="Open ROI Loader")
+        self._btn_launch_loader.clicked.connect(self._launch_roi_loader)
+        self.append(self._btn_launch_loader)
+
+    def _launch_roi_loader(self):
+        from contextlib import suppress
+
+        from napari_ome_zarr_navigator.roi_loader import ROILoaderPlate
+
+        if self.plate_browser.roi_widget:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(self.plate_browser.roi_widget)  # type: ignore[arg-type]
+
+        loader = ROILoaderPlate(
+            viewer=self._viewer,
+            plate_store=self.plate_store,
+            row=self.row,
+            col=self.col,
+            plate_browser=self.plate_browser,
+            is_plate=self.is_plate,
+            plate_id=self.plate_id,
+            is_local=self.is_local,
+        )
+        self.plate_browser.roi_loader = loader
+        self.plate_browser.roi_widget = self._viewer.window.add_dock_widget(
+            widget=loader,
+            name="ROI Loader",
+            tabify=True,
+            allowed_areas=["right"],
+        )
+        self.plate_browser._wire_annotator_loader()
 
     def _get_available_images(self) -> list[str]:
         well = self.plate.get_well(row=self.row, column=self.col)

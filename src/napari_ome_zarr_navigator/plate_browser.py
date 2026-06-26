@@ -206,6 +206,7 @@ class PlateBrowser(Container):
                 with suppress(RuntimeError):
                     self.viewer.window.remove_dock_widget(self.roi_widget)  # type: ignore[arg-type]
 
+            is_local = self._zarr_selector._source_selector.value == "File"
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
                 self._plate_mgr.plate_store,
@@ -214,6 +215,7 @@ class PlateBrowser(Container):
                 self,
                 self._plate_mgr.is_plate,
                 plate_id=self._zarr_selector.url,
+                is_local=is_local,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,

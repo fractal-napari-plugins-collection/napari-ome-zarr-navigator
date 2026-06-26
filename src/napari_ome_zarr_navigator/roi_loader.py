@@ -580,6 +580,7 @@ class ROILoaderPlate(ROILoader):
         plate_browser,
         is_plate: bool,
         plate_id: str = "",
+        is_local: bool = True,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
@@ -588,6 +589,8 @@ class ROILoaderPlate(ROILoader):
         self.col = col
         self.plate_browser = plate_browser
         self.plate_id = plate_id
+        self.is_local = is_local
+        self.is_plate = is_plate
 
         plate_name = Path(str(plate_id)).name if plate_id else str(plate_store)
         self._info_label = Label(value=f"Well: {row}{col}  |  {plate_name}")
@@ -608,6 +611,40 @@ class ROILoaderPlate(ROILoader):
         self.translation, _ = calculate_well_positions(
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
+
+        self._btn_launch_annotator = PushButton(text="Open ROI Annotator")
+        self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
+        self.append(self._btn_launch_annotator)
+
+    def _launch_roi_annotator(self):
+        from contextlib import suppress
+
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorPlate
+
+        if self.plate_browser.roi_annotator_widget:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(
+                    self.plate_browser.roi_annotator_widget
+                )  # type: ignore[arg-type]
+
+        annotator = ROIAnnotatorPlate(
+            viewer=self._viewer,
+            plate_store=self.plate_store,
+            row=self.row,
+            col=self.col,
+            plate_browser=self.plate_browser,
+            is_plate=self.is_plate,
+            plate_id=self.plate_id,
+            is_local=self.is_local,
+        )
+        self.plate_browser.roi_annotator = annotator
+        self.plate_browser.roi_annotator_widget = self._viewer.window.add_dock_widget(
+            widget=annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
+        self.plate_browser._wire_annotator_loader()
 
     def get_available_ome_zarr_images(self):
         well = self.plate.get_well(row=self.row, column=self.col)
