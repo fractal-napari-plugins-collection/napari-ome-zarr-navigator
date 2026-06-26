@@ -11,7 +11,6 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container
 from ngio.utils import fractal_fsspec_store
 
@@ -50,6 +49,13 @@ class PlateBrowser(Container):
             tooltip="Once you've loaded a ROI with the 'Select ROI to load' "
             "button, this allows you to load the same ROI for different wells.",
         )
+        self.btn_annotate_roi = PushButton(
+            text="Annotate ROIs",
+            enabled=False,
+            tooltip="Open the ROI Annotator to draw ROIs on the selected well.",
+        )
+        self.roi_annotator = None
+        self.roi_annotator_widget = None
         self._condition_table_source = ComboBox(
             label="Filter by condition",
             choices=[
@@ -92,6 +98,7 @@ class PlateBrowser(Container):
                 ),
                 self.btn_load_roi,
                 self.btn_load_default_roi,
+                self.btn_annotate_roi,
             ],
         )
         self.viewer.layers.selection.events.changed.connect(self.get_zarr_url)
@@ -101,6 +108,7 @@ class PlateBrowser(Container):
         self.select_well.clicked.connect(self.go_to_well)
         self.btn_load_roi.clicked.connect(self.launch_load_roi)
         self.btn_load_default_roi.clicked.connect(self.load_default_roi)
+        self.btn_annotate_roi.clicked.connect(self.launch_roi_annotator)
         self._condition_table_source.changed.connect(
             self.on_condition_table_source_changed
         )
@@ -123,6 +131,7 @@ class PlateBrowser(Container):
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
             self.btn_load_default_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
             self.well.choices = []
             self.well._default_choices = []
             return
@@ -149,9 +158,11 @@ class PlateBrowser(Container):
 
             self.select_well.enabled = True
             self.btn_load_roi.enabled = True
+            self.btn_annotate_roi.enabled = True
         else:
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
 
     def _update_well_choices(self, wells: list) -> None:
         with suppress(Exception):
@@ -164,6 +175,7 @@ class PlateBrowser(Container):
             self._zarr_selector.set_url("")
             self.select_well.enabled = False
             self.btn_load_roi.enabled = False
+            self.btn_annotate_roi.enabled = False
             self.well.choices = []
             self.well._default_choices = []
             self._cond_filter.filter_container.clear()
@@ -188,14 +200,13 @@ class PlateBrowser(Container):
         assert self._plate_mgr.plate_store is not None
         wells = get_row_cols(self.well.value)
         if len(wells) != 1:
-            msg = "Please select a single well."
-            logger.info(msg)
-            show_info(msg)
+            logger.info("Please select a single well.")
         else:
             if self.roi_widget:
                 with suppress(RuntimeError):
                     self.viewer.window.remove_dock_widget(self.roi_widget)  # type: ignore[arg-type]
 
+            is_local = self._zarr_selector._source_selector.value == "File"
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
                 self._plate_mgr.plate_store,
@@ -204,6 +215,7 @@ class PlateBrowser(Container):
                 self,
                 self._plate_mgr.is_plate,
                 plate_id=self._zarr_selector.url,
+                is_local=is_local,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,
@@ -211,6 +223,54 @@ class PlateBrowser(Container):
                 tabify=True,
                 allowed_areas=["right"],
             )
+            self._wire_annotator_loader()
+
+    def launch_roi_annotator(self):
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorPlate
+
+        assert self._plate_mgr.plate_store is not None
+        wells = get_row_cols(self.well.value)
+        if len(wells) != 1:
+            logger.info("Please select a single well.")
+            return
+
+        if self.roi_annotator_widget:
+            with suppress(RuntimeError):
+                self.viewer.window.remove_dock_widget(self.roi_annotator_widget)  # type: ignore[arg-type]
+
+        is_local = self._zarr_selector._source_selector.value == "File"
+        self.roi_annotator = ROIAnnotatorPlate(
+            self.viewer,
+            self._plate_mgr.plate_store,
+            wells[0][0],
+            wells[0][1],
+            self,
+            self._plate_mgr.is_plate,
+            plate_id=self._zarr_selector.url,
+            is_local=is_local,
+        )
+        self.roi_annotator_widget = self.viewer.window.add_dock_widget(
+            widget=self.roi_annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
+        self._wire_annotator_loader()
+
+    def _wire_annotator_loader(self):
+        """Connect annotator's post-save to loader's refresh (plate case only)."""
+        if self.roi_annotator is None or self.roi_loader is None:
+            return
+        import weakref
+
+        loader_ref = weakref.ref(self.roi_loader)
+
+        def _auto_refresh():
+            loader = loader_ref()
+            if loader is not None:
+                loader.refresh_roi_tables()
+
+        self.roi_annotator._post_save_callbacks = [_auto_refresh]
 
     def load_default_roi(self):
         assert self._plate_mgr.plate_store is not None
@@ -301,9 +361,7 @@ class PlateBrowser(Container):
                 self.viewer.camera.center = rec.mean(axis=0)
             self.viewer.camera.zoom = self.zoom_level.value
         else:
-            msg = "Please select at least one well"
-            logger.info(msg)
-            show_info(msg)
+            logger.info("Please select at least one well")
 
     def on_condition_table_source_changed(self):
         if not self._plate_mgr.zarr_plate:

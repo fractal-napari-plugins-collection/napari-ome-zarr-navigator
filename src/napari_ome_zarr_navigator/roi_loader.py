@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import napari
 import ngio
@@ -6,6 +7,7 @@ from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
+    Label,
     PushButton,
     Select,
 )
@@ -26,13 +28,11 @@ from napari_ome_zarr_navigator.roi_loading_utils import (
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     LoaderState,
-    NapariHandler,
     ZarrSelector,
     calculate_well_positions,
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Sentinel values shown in the UI when no ROI tables are found.
 # Whole-image loading is not yet implemented; these keep the UI from crashing.
@@ -50,7 +50,6 @@ class ROILoader(Container):
         extra_widgets=None,
     ):
         self._viewer = viewer
-        self.setup_logging()
         # Used to identify the zarr image in the feature table
         self.zarr_id = ""
 
@@ -104,6 +103,15 @@ class ROILoader(Container):
         self._advanced_container.visible = False
 
         self._run_button = PushButton(value=False, text="Load ROI")
+        self._refresh_tables_btn = PushButton(text="↺", enabled=False)
+        self._refresh_tables_btn.tooltip = "Refresh ROI table selection"
+        self._refresh_tables_btn.native.setFixedWidth(28)
+        self._roi_table_row = Container(
+            widgets=[self._roi_table_picker, self._refresh_tables_btn],
+            layout="horizontal",
+            labels=False,
+        )
+        self._roi_table_row.label = "ROI Table"
         self._ome_zarr_container: ngio.OmeZarrContainer | None = None
 
         self.image_changed_event = ROILoaderSignals()
@@ -118,9 +126,10 @@ class ROILoader(Container):
         self._label_loading_mode.changed.connect(self._on_label_mode_changed)
         self._advanced_toggle.clicked.connect(self._toggle_advanced)
         self._run_button.clicked.connect(self.run)
+        self._refresh_tables_btn.clicked.connect(self.refresh_roi_tables)
 
         widgets = [
-            self._roi_table_picker,
+            self._roi_table_row,
             self._roi_picker,
             self._channel_picker,
             self._label_picker,
@@ -173,19 +182,13 @@ class ROILoader(Container):
     def state(self, new: LoaderState) -> None:
         self._btn_ctrl.set_state(new)
 
-    def setup_logging(self):
-        for handler in logger.root.handlers[:]:
-            logging.root.removeHandler(handler)
-        napari_handler = NapariHandler()
-        napari_handler.setLevel(logging.INFO)
-        logger.addHandler(napari_handler)
-
     # ------------------------------------------------------------------
     # Initialization sequence
     # ------------------------------------------------------------------
 
     def _start_initialization(self, *_):
         # 3 steps: (1) ROI-tables list, (2) ROI-names (dependent on 1), (3) image-attrs
+        self._refresh_tables_btn.enabled = True
         self._btn_ctrl.begin_init(n_steps=3)
 
         # (1) Start ROI-tables lookup:
@@ -200,6 +203,22 @@ class ROILoader(Container):
         # (3) Kick off image-attrs right away (synchronous), then mark done:
         self.update_available_image_attrs(self.ome_zarr_container)
         self._btn_ctrl.on_step_done()
+
+    def refresh_roi_tables(self) -> None:
+        """Re-fetch ROI table list from disk, preserving current selections if still valid."""
+        if self.ome_zarr_container is None:
+            return
+        self._btn_ctrl.begin_init(
+            n_steps=2
+        )  # _on_tables_ready fires on_step_done twice
+
+        @thread_worker
+        def _get():
+            return self.get_roi_tables()
+
+        w = _get()  # type: ignore[call-arg]
+        w.returned.connect(self._on_tables_ready)
+        w.start()
 
     def get_roi_tables(self) -> list[str]:
         """
@@ -399,6 +418,7 @@ class ROILoader(Container):
             picker._default_choices = []
         self._image_res_map = {}
         self._label_res_map = {}
+        self._refresh_tables_btn.enabled = False
         self.state = LoaderState.INITIALIZING
 
     # ------------------------------------------------------------------
@@ -488,21 +508,46 @@ class ROILoaderImage(ROILoader):
         viewer: napari.Viewer,
         zarr_url: str | None = None,
         token: str | None = None,
+        source: str = "File",
     ):
         self.zarr_selector = ZarrSelector()
 
+        extra: list = [self.zarr_selector]
+        if zarr_url:
+            self._info_label = Label(value=f"Image: {Path(zarr_url).name}")
+            self._info_label.tooltip = zarr_url
+            extra = [self._info_label] + extra
+
         super().__init__(
             viewer=viewer,
-            extra_widgets=[self.zarr_selector],
+            extra_widgets=extra,
         )
-
         self.zarr_selector.on_change(self.update_image_selection)
 
         if zarr_url:
-            if token:
-                self.zarr_selector.set_url(zarr_url, token=token)
-            else:
-                self.zarr_selector.set_url(zarr_url)
+            self.zarr_selector.configure(source=source, url=zarr_url, token=token)
+            self.zarr_selector.hide()
+            self.update_image_selection()
+        else:
+            self._btn_launch_annotator = PushButton(text="Annotate ROIs interactively")
+            self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
+            self.append(self._btn_launch_annotator)
+
+    def _launch_roi_annotator(self):
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorImage
+
+        annotator = ROIAnnotatorImage(
+            viewer=self._viewer,
+            zarr_url=self.zarr_selector.url,
+            token=self.zarr_selector.token,
+            source=self.zarr_selector.source,
+        )
+        self._viewer.window.add_dock_widget(
+            widget=annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def update_image_selection(self):
         source = self.zarr_selector.source
@@ -535,6 +580,7 @@ class ROILoaderPlate(ROILoader):
         plate_browser,
         is_plate: bool,
         plate_id: str = "",
+        is_local: bool = True,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
@@ -543,11 +589,16 @@ class ROILoaderPlate(ROILoader):
         self.col = col
         self.plate_browser = plate_browser
         self.plate_id = plate_id
+        self.is_local = is_local
+        self.is_plate = is_plate
+
+        plate_name = Path(str(plate_id)).name if plate_id else str(plate_store)
+        self._info_label = Label(value=f"Well: {row}{col}  |  {plate_name}")
+        self._info_label.tooltip = str(plate_id) if plate_id else str(plate_store)
+
         super().__init__(
             viewer=viewer,
-            extra_widgets=[
-                self._zarr_picker,
-            ],
+            extra_widgets=[self._info_label, self._zarr_picker],
         )
         self.layer_base_name = f"{row}{col}_{self.layer_base_name}"
         self._zarr_picker.changed.connect(self.update_image_selection)
@@ -560,6 +611,40 @@ class ROILoaderPlate(ROILoader):
         self.translation, _ = calculate_well_positions(
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
+
+        self._btn_launch_annotator = PushButton(text="Open ROI Annotator")
+        self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
+        self.append(self._btn_launch_annotator)
+
+    def _launch_roi_annotator(self):
+        from contextlib import suppress
+
+        from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorPlate
+
+        if self.plate_browser.roi_annotator_widget:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(
+                    self.plate_browser.roi_annotator_widget
+                )  # type: ignore[arg-type]
+
+        annotator = ROIAnnotatorPlate(
+            viewer=self._viewer,
+            plate_store=self.plate_store,
+            row=self.row,
+            col=self.col,
+            plate_browser=self.plate_browser,
+            is_plate=self.is_plate,
+            plate_id=self.plate_id,
+            is_local=self.is_local,
+        )
+        self.plate_browser.roi_annotator = annotator
+        self.plate_browser.roi_annotator_widget = self._viewer.window.add_dock_widget(
+            widget=annotator,
+            name="ROI Annotator",
+            tabify=True,
+            allowed_areas=["right"],
+        )
+        self.plate_browser._wire_annotator_loader()
 
     def get_available_ome_zarr_images(self):
         well = self.plate.get_well(row=self.row, column=self.col)

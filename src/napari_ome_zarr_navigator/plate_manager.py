@@ -1,7 +1,6 @@
 import logging
 
 import pandas as pd
-from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_plate
 from ngio.utils import (
     NgioFileNotFoundError,
@@ -68,7 +67,6 @@ class PlateManager:
                 f"check the validation error: \n {e}"
             )
             logger.info(msg)
-            show_info(msg)
 
     def get_plate_wells(self, filters=None) -> tuple[list[str], pd.DataFrame]:
         """Return sorted well names and a row/col DataFrame.

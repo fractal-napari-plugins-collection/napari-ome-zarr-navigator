@@ -96,7 +96,12 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--color=yes --cov=napari_ome_zarr_navigator --cov-report=xml"
+addopts = "--color=yes --cov --cov-report=xml"
+filterwarnings = [
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+    "ignore::anndata._warnings.ImplicitModificationWarning",
+]
 
 [tool.coverage.run]
+source_pkgs = ["napari_ome_zarr_navigator"]
 omit = ["*/_tests/*"]

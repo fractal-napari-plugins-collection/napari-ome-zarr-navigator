@@ -12,6 +12,9 @@ contributions:
     - id: napari-ome-zarr-navigator.make_roi_loader
       python_name: napari_ome_zarr_navigator.roi_loader:ROILoaderImage
       title: ROI Loader
+    - id: napari-ome-zarr-navigator.make_roi_annotator
+      python_name: napari_ome_zarr_navigator.roi_annotator:ROIAnnotatorImage
+      title: ROI Annotator
     - id: napari-ome-zarr-navigator.hiPSC_zarr
       python_name: napari_ome_zarr_navigator._sample_data:hiPSC_zarr
       title: Load hiPSC sample data from Zenodo
@@ -30,3 +33,5 @@ contributions:
       display_name: Plate Browser
     - command: napari-ome-zarr-navigator.make_roi_loader
       display_name: ROI Loader
+    - command: napari-ome-zarr-navigator.make_roi_annotator
+      display_name: ROI Annotator

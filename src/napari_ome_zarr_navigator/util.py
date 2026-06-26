@@ -58,7 +58,10 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
     ome_zarr_container = open_ome_zarr_container(image_store, cache=True, mode="r")
     level = ome_zarr_container.level_paths[0]
     ome_zarr_image = ome_zarr_container.get_image(path=level)
-    shape = ome_zarr_image.shape[-2:]
+    axes = ome_zarr_image.axes
+    y_idx = axes.index("y")
+    x_idx = axes.index("x")
+    shape = (ome_zarr_image.shape[y_idx], ome_zarr_image.shape[x_idx])
     scale = (ome_zarr_image.pixel_size.y, ome_zarr_image.pixel_size.x)
 
     row_i = zarr_plate.rows.index(row)
@@ -80,8 +83,25 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
 
 class NapariHandler(logging.Handler):
     def emit(self, record):
+        from napari.utils.notifications import show_warning
+
         log_entry = self.format(record)
-        show_info(log_entry)
+        if record.levelno >= logging.WARNING:
+            show_warning(log_entry)
+        else:
+            show_info(log_entry)
+
+
+# Attach once to the package root logger so all sub-module loggers
+# (plate_browser, roi_loader, roi_annotator, …) route through it.
+# propagate=False prevents double-printing via the root StreamHandler.
+_pkg_logger = logging.getLogger("napari_ome_zarr_navigator")
+if not any(isinstance(h, NapariHandler) for h in _pkg_logger.handlers):
+    _handler = NapariHandler()
+    _handler.setLevel(logging.INFO)
+    _pkg_logger.addHandler(_handler)
+    _pkg_logger.setLevel(logging.INFO)
+    _pkg_logger.propagate = False
 
 
 class LoaderState(Enum):
@@ -129,15 +149,17 @@ class ZarrSelector(Container):
 
         # Stack & layout
         self._stack = Container(
-            widgets=[self._file_picker, self._http_url, self._http_token]
+            widgets=[self._file_picker, self._http_url, self._http_token],
+            labels=False,
         )
         self._http_url.hide()
         self._http_token.hide()
 
         self._main = Container(
-            widgets=[Label(value=label), self._source_selector, self._stack]  # type: ignore[call-arg, arg-type]
+            widgets=[Label(value=label), self._source_selector, self._stack],  # type: ignore[call-arg, arg-type]
+            labels=False,
         )
-        super().__init__(widgets=[self._main])
+        super().__init__(widgets=[self._main], labels=False)
 
         # Debounce
         self._timer = QTimer()
@@ -202,6 +224,18 @@ class ZarrSelector(Container):
         """Set a zarr_url"""
         self._file_picker.value = zarr_url  # type: ignore[assignment]
         self._http_url.value = zarr_url
+        self._http_token.value = token or ""
+
+    def configure(self, source: str, url: str, token: str | None = None) -> None:
+        """Set source, URL and token together.
+
+        Use when pre-populating from another widget so the source (File vs HTTP)
+        is preserved and credentials are not lost. set_url() alone does not set
+        the source selector, so HTTP tokens would be silently ignored.
+        """
+        self._source_selector.value = source  # triggers _on_source_changed
+        self._file_picker.value = url  # type: ignore[assignment]
+        self._http_url.value = url
         self._http_token.value = token or ""
 
     @property
