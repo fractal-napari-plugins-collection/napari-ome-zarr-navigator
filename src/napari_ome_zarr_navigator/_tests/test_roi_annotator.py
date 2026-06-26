@@ -118,7 +118,7 @@ def test_mask_mode_reverts_on_empty(make_napari_viewer):
 
     assert annotator._label_layer_picker.native.isHidden()
     assert annotator._init_layer_btn.text == "Initialize ROI Layer"
-    assert annotator._table_name.value == "interactive_ROIs"
+    assert annotator._table_name.value == "interactive_ROI_table"
 
 
 # ---------------------------------------------------------------------------

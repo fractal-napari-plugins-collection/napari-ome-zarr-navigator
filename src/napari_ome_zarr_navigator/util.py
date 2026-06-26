@@ -149,13 +149,15 @@ class ZarrSelector(Container):
 
         # Stack & layout
         self._stack = Container(
-            widgets=[self._file_picker, self._http_url, self._http_token]
+            widgets=[self._file_picker, self._http_url, self._http_token],
+            labels=False,
         )
         self._http_url.hide()
         self._http_token.hide()
 
         self._main = Container(
-            widgets=[Label(value=label), self._source_selector, self._stack]  # type: ignore[call-arg, arg-type]
+            widgets=[Label(value=label), self._source_selector, self._stack],  # type: ignore[call-arg, arg-type]
+            labels=False,
         )
         super().__init__(widgets=[self._main], labels=False)
 

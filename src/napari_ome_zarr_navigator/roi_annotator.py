@@ -103,7 +103,7 @@ class ROIAnnotator(Container):
         )
         self._reference_label_picker.hide()
 
-        self._table_name = LineEdit(label="Table name", value="interactive_ROIs")
+        self._table_name = LineEdit(label="Table name", value="interactive_ROI_table")
         self._backend_picker = ComboBox(
             label="Backend",
             choices=list(_BACKEND_MAP.keys()),
@@ -160,13 +160,13 @@ class ROIAnnotator(Container):
                 self._table_name.value = self._default_mask_table_name()
             else:
                 self._reference_label_picker.hide()
-                self._table_name.value = "interactive_ROIs"
+                self._table_name.value = "interactive_ROI_table"
         else:
             self._init_layer_btn.text = "Initialize ROI Layer"
             self._label_layer_picker.hide()
             self._save_type_picker.hide()
             self._reference_label_picker.hide()
-            self._table_name.value = "interactive_ROIs"
+            self._table_name.value = "interactive_ROI_table"
         self._update_save_btn_state()
 
     def _on_main_btn_clicked(self):
@@ -197,6 +197,8 @@ class ROIAnnotator(Container):
             self._label_layer_picker.value = layers[0]
 
     def _on_label_layer_selected(self, _=None):
+        if self._mode_selector.value != _MODE_MASK:
+            return
         if self._save_type_picker.value == "Masking ROI Table":
             self._table_name.value = self._default_mask_table_name()
             self._refresh_reference_label_picker()
@@ -214,7 +216,7 @@ class ROIAnnotator(Container):
             self._table_name.value = self._default_mask_table_name()
         else:
             self._reference_label_picker.hide()
-            self._table_name.value = "interactive_ROIs"
+            self._table_name.value = "interactive_ROI_table"
 
     def _refresh_reference_label_picker(self):
         """Repopulate reference label choices from the OME-Zarr container."""
@@ -752,7 +754,7 @@ class ROIAnnotator(Container):
             self._save_btn.text = "Save ROI Table"
             self._update_save_btn_state()
 
-    def _save_shapes_roi_table(self):
+    def _save_shapes_roi_table(self, _fallback_note: str | None = None):
         shapes_layer = self._get_shapes_layer_for_save()
         if shapes_layer is None:
             return
@@ -763,13 +765,19 @@ class ROIAnnotator(Container):
         table_name = self._table_name.value.strip()
         if not self._do_save_table(RoiTable(rois=rois)):
             return
+        suffix = f" ({_fallback_note})" if _fallback_note else ""
         if skipped:
             logger.warning(
                 "Saved %d ROI(s) to table '%s'; %d shape(s) skipped"
-                " (not rectangles or out of bounds).",
+                " (not rectangles or out of bounds).%s",
                 len(rois),
                 table_name,
                 skipped,
+                suffix,
+            )
+        elif _fallback_note:
+            logger.warning(
+                "Saved %d ROI(s) to table '%s'%s.", len(rois), table_name, suffix
             )
         else:
             logger.info("Saved %d ROI(s) to table '%s'.", len(rois), table_name)
@@ -787,11 +795,12 @@ class ROIAnnotator(Container):
 
         ref = self._reference_label_picker.value
         if ref == "(no label images)":
-            logger.warning(
-                "No label image found in the OME-Zarr. Saving as ROI Table instead. "
-                "To save as Masking ROI Table, first save the label to the OME-Zarr."
+            self._save_shapes_roi_table(
+                _fallback_note=(
+                    "no label image found in the OME-Zarr, saved as ROI Table instead; "
+                    "to save as Masking ROI Table first save the label to the OME-Zarr"
+                )
             )
-            self._save_shapes_roi_table()
             return
 
         # Read per-shape properties stored when calculate_masking_roi_table ran.

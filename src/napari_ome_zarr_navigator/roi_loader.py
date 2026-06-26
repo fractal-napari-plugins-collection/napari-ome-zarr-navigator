@@ -522,7 +522,6 @@ class ROILoaderImage(ROILoader):
             viewer=viewer,
             extra_widgets=extra,
         )
-
         self.zarr_selector.on_change(self.update_image_selection)
 
         if zarr_url:
