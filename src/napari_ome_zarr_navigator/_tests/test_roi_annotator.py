@@ -172,7 +172,7 @@ def test_remote_save_writes_to_folder(make_napari_viewer, tmp_path):
 
     annotator.save_roi_table()
 
-    dest = str(tmp_path / "remote_test_table")
+    dest = str(tmp_path / "tables")
     tc = open_tables_container(dest, mode="r")
     assert "remote_test_table" in tc.list()
 

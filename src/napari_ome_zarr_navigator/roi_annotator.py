@@ -735,7 +735,7 @@ class ROIAnnotator(Container):
             logger.warning("Select a local folder to save the ROI table.")
             return False
         backend = _BACKEND_MAP[self._backend_picker.value]
-        dest = str(Path(folder) / table_name)
+        dest = str(Path(folder) / "tables")
         self._save_btn.enabled = False
         self._save_btn.text = "Saving..."
         try:
