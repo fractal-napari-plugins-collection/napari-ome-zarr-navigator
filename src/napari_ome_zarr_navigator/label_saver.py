@@ -12,7 +12,7 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 from ngio import open_ome_zarr_container
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import ZarrSelector
 
@@ -396,6 +396,28 @@ class LabelSaverImage(Container):
         return label_array, tuple(layer_scale_list), "".join(label_axes_list)
 
     @staticmethod
+    def _insert_c_dim(shape: tuple, img) -> tuple:
+        """Insert the c dimension into *shape* when the reference image has a c axis.
+
+        ngio's ``derive_label`` validates ``len(shape) == len(ref_image.shape)``
+        *before* it applies ``channels_policy='squeeze'``, so a label shape
+        (z, y, x) is rejected for a (c, z, y, x) image even though the c axis
+        is removed by the policy immediately afterwards.
+
+        Workaround: insert the image's c size at the correct axis position so
+        the length check passes; ngio then squeezes it out, leaving a label
+        without a channel axis.  For images without c the shape is returned
+        unchanged.
+
+        See https://github.com/BioVisionCenter/ngio/issues/195
+        """
+        if "c" not in img.axes:
+            return shape
+        c_idx = list(img.axes).index("c")
+        c_size = img.shape[c_idx]
+        return shape[:c_idx] + (c_size,) + shape[c_idx:]
+
+    @staticmethod
     def _validate_full(
         label_array: np.ndarray,
         layer_scale: tuple,
@@ -666,7 +688,7 @@ class LabelSaverImage(Container):
 
         label_obj = container.derive_label(
             name=label_name,
-            shape=label_array.shape,
+            shape=self._insert_c_dim(label_array.shape, img),
             pixelsize=pixelsize_yx,
             z_spacing=z_spacing,
             time_spacing=time_spacing,
@@ -738,7 +760,7 @@ class LabelSaverImage(Container):
             overwrite = write_mode == _WM_RESET
             label_obj = container.derive_label(
                 name=label_name,
-                shape=full_shape,
+                shape=self._insert_c_dim(full_shape, img),
                 pixelsize=pixelsize_yx,
                 z_spacing=z_spacing,
                 time_spacing=time_spacing,
