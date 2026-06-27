@@ -5,9 +5,8 @@ import pytest
 from ngio import create_synthetic_ome_zarr, open_ome_zarr_container
 
 from napari_ome_zarr_navigator.label_saver import (
-    _WM_APPEND,
+    _WM_EDIT,
     _WM_NEW,
-    _WM_OVERWRITE,
     _WM_RESET,
     LabelSaverImage,
 )
@@ -147,9 +146,9 @@ def test_label_saver_write_mode_choices(make_napari_viewer):
     saver = LabelSaverImage(viewer=viewer)
     choices = list(saver._write_mode.choices)
     assert _WM_NEW in choices
-    assert _WM_OVERWRITE in choices
     assert _WM_RESET in choices
-    assert _WM_APPEND in choices
+    assert _WM_EDIT in choices
+    assert len(choices) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -356,43 +355,6 @@ def test_mode_new_sub_roi_writes_partial(make_napari_viewer, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — Mode: Overwrite full label
-# ---------------------------------------------------------------------------
-
-
-def test_mode_overwrite_replaces_existing(make_napari_viewer, tmp_path):
-    image_dir = tmp_path / "test.zarr"
-    create_synthetic_ome_zarr(
-        store=str(image_dir), shape=(1, 64, 64), table_backend="csv"
-    )
-    viewer = make_napari_viewer()
-    layer = _make_full_label_layer(viewer, str(image_dir))
-    saver = LabelSaverImage(viewer=viewer)
-    kwargs = _base_kwargs(str(image_dir), layer, _WM_OVERWRITE)
-    assert saver._do_save_impl(**kwargs) is True
-    assert saver._do_save_impl(**kwargs) is True  # second save also succeeds
-
-
-def test_mode_overwrite_fails_on_extent_mismatch(make_napari_viewer, tmp_path):
-    image_dir = tmp_path / "test.zarr"
-    create_synthetic_ome_zarr(
-        store=str(image_dir), shape=(1, 64, 64), table_backend="csv"
-    )
-    viewer = make_napari_viewer()
-    container = open_ome_zarr_container(str(image_dir), mode="r")
-    img = container.get_image()
-    sub_data = np.zeros((32, 32), dtype=np.uint32)
-    sub_layer = viewer.add_labels(
-        sub_data, name="sub", scale=(img.pixel_size.y, img.pixel_size.x)
-    )
-    saver = LabelSaverImage(viewer=viewer)
-    assert (
-        saver._do_save_impl(**_base_kwargs(str(image_dir), sub_layer, _WM_OVERWRITE))
-        is False
-    )
-
-
-# ---------------------------------------------------------------------------
 # Integration tests — Mode: Reset existing label
 # ---------------------------------------------------------------------------
 
@@ -423,7 +385,7 @@ def test_mode_reset_fails_if_label_missing(make_napari_viewer, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — Mode: Append to existing label
+# Integration tests — Mode: Edit existing label
 # ---------------------------------------------------------------------------
 
 
@@ -448,7 +410,7 @@ def test_mode_append_patches_existing(make_napari_viewer, tmp_path):
         sub_data, name="lbl_sub", scale=(pxy, pxx), translate=(10 * pxy, 10 * pxx)
     )
     # Pass label_name="lbl" explicitly so it targets the existing OME-Zarr label
-    kwargs = _base_kwargs(str(image_dir), sub_layer, _WM_APPEND)
+    kwargs = _base_kwargs(str(image_dir), sub_layer, _WM_EDIT)
     kwargs["label_name"] = "lbl"
     assert saver._do_save_impl(**kwargs) is True
 
@@ -467,9 +429,7 @@ def test_mode_append_fails_if_label_missing(make_napari_viewer, tmp_path):
     viewer = make_napari_viewer()
     layer = _make_full_label_layer(viewer, str(image_dir))
     saver = LabelSaverImage(viewer=viewer)
-    assert (
-        saver._do_save_impl(**_base_kwargs(str(image_dir), layer, _WM_APPEND)) is False
-    )
+    assert saver._do_save_impl(**_base_kwargs(str(image_dir), layer, _WM_EDIT)) is False
 
 
 # ---------------------------------------------------------------------------

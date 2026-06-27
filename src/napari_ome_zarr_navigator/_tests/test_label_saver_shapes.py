@@ -4,14 +4,8 @@ Parametrised regression tests for LabelSaverImage across OME-Zarr axes/shapes.
 Four write patterns are tested against every image configuration:
   1. Full label (no c axis) matching all non-channel axes.
   2. 2D (yx-only) label for images where every non-yx/c axis is a singleton.
-  3. 2x downsampled label (mode "Overwrite full label").
+  3. 2x downsampled label (mode "Save as new label").
   4. Partial-region append: pixels outside the sub-region must stay unchanged.
-
-Tests for images with a channel axis currently fail because ngio's
-``derive_label(shape=...)`` validation compares the provided shape against the
-full reference image shape including c, but labels never have a c axis.
-Those failures reproduce the ngio bug and are expected to become green once a
-fix is in place.
 """
 
 import numpy as np
@@ -19,9 +13,8 @@ import pytest
 from ngio import create_synthetic_ome_zarr, open_ome_zarr_container
 
 from napari_ome_zarr_navigator.label_saver import (
-    _WM_APPEND,
+    _WM_EDIT,
     _WM_NEW,
-    _WM_OVERWRITE,
     LabelSaverImage,
 )
 
@@ -201,7 +194,7 @@ def test_save_downsampled_label(make_napari_viewer, tmp_path, image_shape, axes_
     )
     saver = LabelSaverImage(viewer=viewer)
     assert saver._do_save_impl(
-        **_save_kwargs(image_path, layer, "seg_down", laxes, _WM_OVERWRITE)
+        **_save_kwargs(image_path, layer, "seg_down", laxes, _WM_NEW)
     )
     assert "seg_down" in open_ome_zarr_container(image_path, mode="r").list_labels()
 
@@ -248,7 +241,7 @@ def test_partial_write_preserves_outside(
         scale=lscale,
         translate=patch_translate,
     )
-    kwargs = _save_kwargs(image_path, patch_layer, "seg", laxes, _WM_APPEND)
+    kwargs = _save_kwargs(image_path, patch_layer, "seg", laxes, _WM_EDIT)
     assert saver._do_save_impl(**kwargs), "Partial append failed"
 
     # Step 3: verify patch region is 1, strip above patch is still 0

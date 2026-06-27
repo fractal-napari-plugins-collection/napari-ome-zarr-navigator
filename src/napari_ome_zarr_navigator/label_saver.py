@@ -12,7 +12,6 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 from ngio import open_ome_zarr_container
-from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import ZarrSelector
 
@@ -21,11 +20,10 @@ logger = logging.getLogger(__name__)
 _BACKEND_CHOICES = ["csv", "anndata", "json", "parquet"]
 
 # Write-mode constants (used as ComboBox values and in _do_save_impl branching)
-_WM_NEW = "New label (initialise)"
-_WM_OVERWRITE = "Overwrite full label"
+_WM_NEW = "Save as new label"
+_WM_EDIT = "Edit existing label"
 _WM_RESET = "Reset existing label"
-_WM_APPEND = "Append to existing label"
-_WRITE_MODES = [_WM_NEW, _WM_OVERWRITE, _WM_RESET, _WM_APPEND]
+_WRITE_MODES = [_WM_NEW, _WM_EDIT, _WM_RESET]
 
 
 class LabelSaverImage(Container):
@@ -39,7 +37,7 @@ class LabelSaverImage(Container):
     - New label (initialise): create full-size label, fill sub-region if partial
     - Overwrite full label: full-extent validation; replace existing label
     - Reset existing label: destroy & recreate at full size; fill sub-region
-    - Append to existing label: patch-write only the loaded sub-region
+    - Edit existing label: patch-write only the loaded sub-region
 
     Writing to HTTP/remote stores is not supported.
     """
@@ -55,6 +53,8 @@ class LabelSaverImage(Container):
         self._viewer = viewer
         self._roi_loader = roi_loader
         self._ome_zarr_container = None
+        self._last_saved_label: str | None = None
+        self._pending_save_label: str | None = None
         self._zarr_url: str | None = zarr_url
         self._source: str = source
 
@@ -65,18 +65,23 @@ class LabelSaverImage(Container):
             choices=self._get_label_layers(),
         )
 
-        self._label_name = LineEdit(label="Label name", value="")
         self._write_mode = ComboBox(
             label="Write mode",
             choices=_WRITE_MODES,
             value=_WM_NEW,
         )
         self._write_mode.tooltip = (
-            "New label (initialise): create a new full-size label; fill sub-region if loaded from ROI.\n"
-            "Overwrite full label: replace existing label; requires matching spatial extent.\n"
-            "Reset existing label: destroy and recreate the label at full size; fill sub-region.\n"
-            "Append to existing label: patch-write only the loaded sub-region into the existing label."
+            "Save as new label: create a new label; fill sub-region if loaded from ROI.\n"
+            "Edit existing label: patch-write only the loaded sub-region into an existing label.\n"
+            "Reset existing label: destroy and recreate the label; fill sub-region."
         )
+
+        self._label_name = LineEdit(label="Label name", value="")
+        self._existing_label_picker = ComboBox(
+            label="Existing label",
+            choices=[],
+        )
+        self._existing_label_picker.visible = False
 
         self._save_masking_roi = CheckBox(value=False, text="Save masking ROI table")
         self._masking_roi_table_name = LineEdit(label="ROI table name", value="")
@@ -104,8 +109,9 @@ class LabelSaverImage(Container):
             widgets=[
                 self._zarr_selector,
                 self._layer_picker,
-                self._label_name,
                 self._write_mode,
+                self._label_name,
+                self._existing_label_picker,
                 self._save_masking_roi,
                 self._masking_roi_table_name,
                 self._masking_roi_backend,
@@ -115,16 +121,11 @@ class LabelSaverImage(Container):
             ]
         )
 
-        # Debounce timer: fires _update_write_mode_default 400 ms after last keystroke
-        self._label_name_timer = QTimer()
-        self._label_name_timer.setSingleShot(True)
-        self._label_name_timer.timeout.connect(self._update_write_mode_default)
-
         self._zarr_selector.on_change(self._on_url_changed)
         self._layer_picker.changed.connect(self._update_axes_inference)
-        self._layer_picker.changed.connect(self._update_write_mode_default)
+        self._write_mode.changed.connect(self._on_write_mode_changed)
         self._label_name.changed.connect(self._on_label_name_changed)
-        self._label_name.changed.connect(lambda _: self._label_name_timer.start(400))
+        self._existing_label_picker.changed.connect(self._on_existing_label_changed)
         self._save_masking_roi.changed.connect(self._on_save_masking_roi_changed)
         self._advanced_toggle.clicked.connect(self._toggle_advanced)
         self._btn_save.clicked.connect(self._save)
@@ -184,7 +185,7 @@ class LabelSaverImage(Container):
     def _on_container_ready(self, container) -> None:
         self._ome_zarr_container = container
         self._update_axes_inference()
-        self._update_write_mode_default()
+        self._refresh_existing_label_picker()
 
     def _update_axes_inference(self, *_) -> None:
         """Infer axes from the container + selected layer ndim; populate _axes_names."""
@@ -209,71 +210,66 @@ class LabelSaverImage(Container):
         return {2: "yx", 3: "zyx", 4: "tzyx"}.get(label_ndim, "yx")
 
     # ------------------------------------------------------------------
-    # Write mode auto-selection
+    # Write mode and existing-label picker
     # ------------------------------------------------------------------
 
-    def _update_write_mode_default(self, *_) -> None:
-        """Auto-select write mode based on label existence and spatial extent match."""
+    def _on_write_mode_changed(self, mode: str) -> None:
+        is_existing = mode in (_WM_EDIT, _WM_RESET)
+        self._label_name.visible = not is_existing
+        self._existing_label_picker.visible = is_existing
+        if is_existing:
+            self._refresh_existing_label_picker()
+        self._update_save_button_state()
+
+    def _refresh_existing_label_picker(self) -> None:
+        """Populate the existing-label picker from the container; revert to NEW if empty."""
         if self._ome_zarr_container is None:
             return
-        label_name = self._label_name.value.strip()
-        if not label_name:
+        try:
+            labels = self._ome_zarr_container.list_labels()
+        except Exception:  # noqa: BLE001
+            labels = []
+        if not labels and self._write_mode.value in (_WM_EDIT, _WM_RESET):
+            logger.warning(
+                "No existing labels found in this OME-Zarr. "
+                "Switching to 'Save as new label'."
+            )
+            self._write_mode.value = _WM_NEW
             return
-        layer = self._get_selected_layer()
-        if layer is None:
-            return
+        self._existing_label_picker.choices = labels
+        self._existing_label_picker._default_choices = labels
+        preferred = self._last_saved_label
+        if preferred and preferred in labels:
+            self._existing_label_picker.value = preferred
+        elif labels and self._existing_label_picker.value not in labels:
+            self._existing_label_picker.value = labels[0]
+        self._update_save_button_state()
 
-        container = self._ome_zarr_container
-        label_shape = layer.data.shape
-        layer_scale = tuple(layer.scale)
-        axes_str = self._axes_names.value.strip() or self._infer_axes(
-            len(label_shape), container
-        )
-
-        @thread_worker
-        def _check():
-            try:
-                existing = container.list_labels()
-                if label_name not in existing:
-                    return _WM_NEW
-                img = container.get_image(path=container.level_paths[0])
-                axes_list = list(axes_str)
-                img_axes = list(img.axes)
-                for a in ("y", "x"):
-                    if a not in img_axes or a not in axes_list:
-                        continue
-                    img_extent = img.shape[img_axes.index(a)] * getattr(
-                        img.pixel_size, a
-                    )
-                    lbl_extent = label_shape[axes_list.index(a)] * abs(
-                        float(layer_scale[axes_list.index(a)])
-                    )
-                    if (
-                        img_extent > 0
-                        and abs(img_extent - lbl_extent) > 0.01 * img_extent
-                    ):
-                        return _WM_APPEND
-                return _WM_OVERWRITE
-            except Exception:  # noqa: BLE001
-                return None
-
-        worker = _check()  # type: ignore[call-arg]
-        worker.returned.connect(self._on_write_mode_default_ready)
-        worker.start()
-
-    def _on_write_mode_default_ready(self, mode: str | None) -> None:
-        if mode is not None:
-            self._write_mode.value = mode
+    def _get_active_label_name(self) -> str:
+        """Return the label name from whichever widget is active for the current mode."""
+        if self._write_mode.value in (_WM_EDIT, _WM_RESET):
+            return self._existing_label_picker.value or ""
+        return self._label_name.value.strip()
 
     # ------------------------------------------------------------------
     # UI event handlers
     # ------------------------------------------------------------------
 
+    def _update_save_button_state(self) -> None:
+        if self._write_mode.value in (_WM_EDIT, _WM_RESET):
+            self._btn_save.enabled = bool(self._existing_label_picker.choices)
+        else:
+            self._btn_save.enabled = bool(self._label_name.value.strip())
+
     def _on_label_name_changed(self, value: str) -> None:
         stripped = value.strip()
-        self._btn_save.enabled = bool(stripped)
+        self._update_save_button_state()
         if stripped:
             self._masking_roi_table_name.value = f"{stripped}_masking_ROI_table"
+
+    def _on_existing_label_changed(self, value: str) -> None:
+        if value:
+            self._masking_roi_table_name.value = f"{value}_masking_ROI_table"
 
     def _on_save_masking_roi_changed(self, value: bool) -> None:
         self._masking_roi_table_name.visible = value
@@ -300,7 +296,7 @@ class LabelSaverImage(Container):
         return None
 
     def _save(self) -> None:
-        label_name = self._label_name.value.strip()
+        label_name = self._get_active_label_name()
         if not label_name:
             logger.warning("Label name cannot be empty.")
             return
@@ -331,6 +327,7 @@ class LabelSaverImage(Container):
         layer_scale = tuple(layer.scale)
         layer_translate = tuple(float(v) for v in layer.translate)
 
+        self._pending_save_label = label_name
         self._btn_save.enabled = False
         self._btn_save.text = "Saving..."
 
@@ -602,11 +599,11 @@ class LabelSaverImage(Container):
         if write_mode == _WM_NEW and label_exists:
             logger.warning(
                 "Label '%s' already exists. Choose 'Reset existing label' or "
-                "'Append to existing label' to modify it.",
+                "'Edit existing label' to modify it.",
                 label_name,
             )
             return False
-        if write_mode in (_WM_RESET, _WM_APPEND) and not label_exists:
+        if write_mode in (_WM_RESET, _WM_EDIT) and not label_exists:
             logger.warning(
                 "Label '%s' does not exist. Choose 'New label (initialise)' or "
                 "'Overwrite full label' to create it.",
@@ -628,85 +625,25 @@ class LabelSaverImage(Container):
         )
 
         try:
-            if write_mode == _WM_OVERWRITE:
-                return self._save_full_overwrite(
-                    container,
-                    img,
-                    label_array,
-                    layer_scale,
-                    axes_str,
-                    label_name,
-                    label_exists,
-                    pixelsize_yx,
-                    z_spacing,
-                    time_spacing,
-                    save_masking_roi,
-                    masking_roi_table_name,
-                    masking_roi_backend,
-                )
-            else:
-                return self._save_partial(
-                    container,
-                    img,
-                    label_array,
-                    layer_scale,
-                    layer_translate,
-                    axes_str,
-                    label_name,
-                    write_mode,
-                    pixelsize_yx,
-                    z_spacing,
-                    time_spacing,
-                    save_masking_roi,
-                    masking_roi_table_name,
-                    masking_roi_backend,
-                )
+            return self._save_partial(
+                container,
+                img,
+                label_array,
+                layer_scale,
+                layer_translate,
+                axes_str,
+                label_name,
+                write_mode,
+                pixelsize_yx,
+                z_spacing,
+                time_spacing,
+                save_masking_roi,
+                masking_roi_table_name,
+                masking_roi_backend,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to save label '%s': %s", label_name, exc)
             return False
-
-    def _save_full_overwrite(
-        self,
-        container,
-        img,
-        label_array,
-        layer_scale,
-        axes_str,
-        label_name,
-        label_exists,
-        pixelsize_yx,
-        z_spacing,
-        time_spacing,
-        save_masking_roi,
-        masking_roi_table_name,
-        masking_roi_backend,
-    ) -> bool:
-        ok, msg = self._validate_full(label_array, layer_scale, axes_str, img)
-        if not ok:
-            logger.warning("Cannot save label: %s", msg)
-            return False
-
-        label_obj = container.derive_label(
-            name=label_name,
-            shape=self._insert_c_dim(label_array.shape, img),
-            pixelsize=pixelsize_yx,
-            z_spacing=z_spacing,
-            time_spacing=time_spacing,
-            overwrite=label_exists,
-        )
-        label_obj.set_array(label_array)
-        label_obj.consolidate()
-
-        if save_masking_roi:
-            self._write_masking_roi_table(
-                container,
-                label_obj,
-                label_name,
-                masking_roi_table_name,
-                masking_roi_backend,
-                overwrite=label_exists,
-            )
-        return True
 
     def _save_partial(
         self,
@@ -744,7 +681,7 @@ class LabelSaverImage(Container):
             full_shape[axes_list.index("x")] = full_w
         full_shape = tuple(full_shape)
 
-        if write_mode == _WM_APPEND:
+        if write_mode == _WM_EDIT:
             label_obj = container.get_label(label_name)
             label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
             logger.info(
@@ -817,15 +754,18 @@ class LabelSaverImage(Container):
 
     def _on_save_complete(self, success: bool) -> None:
         self._btn_save.text = "Save label to OME-Zarr"
-        self._btn_save.enabled = bool(self._label_name.value.strip())
         if success:
-            logger.info(
-                "Label '%s' saved successfully.", self._label_name.value.strip()
-            )
+            saved_name = self._pending_save_label or ""
+            if self._write_mode.value == _WM_NEW:
+                self._last_saved_label = saved_name
+            logger.info("Label '%s' saved successfully.", saved_name)
+            if self._zarr_url:
+                self._load_container_async(self._zarr_url)
             if self._roi_loader is not None:
                 self._roi_loader.refresh_labels()
+        self._update_save_button_state()
 
     def _on_save_error(self, exc: Exception) -> None:
         self._btn_save.text = "Save label to OME-Zarr"
-        self._btn_save.enabled = bool(self._label_name.value.strip())
+        self._update_save_button_state()
         logger.error("Unexpected error during label save: %s", exc)
