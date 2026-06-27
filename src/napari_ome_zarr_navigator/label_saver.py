@@ -59,7 +59,7 @@ class LabelSaverImage(Container):
         self._zarr_url: str | None = zarr_url
         self._source: str = source
 
-        self._zarr_selector = ZarrSelector()
+        self._zarr_selector = ZarrSelector(label="Image")
 
         self._layer_picker = ComboBox(
             label="Label layer",
@@ -105,6 +105,7 @@ class LabelSaverImage(Container):
         self._advanced_visible = False
 
         self._btn_save = PushButton(text="Save label to OME-Zarr", enabled=False)
+        self._btn_save.native.setStyleSheet("font-weight: bold;")
 
         super().__init__(
             widgets=[

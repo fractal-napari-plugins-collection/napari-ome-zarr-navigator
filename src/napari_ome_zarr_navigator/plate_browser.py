@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class PlateBrowser(Container):
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
-        self._zarr_selector = ZarrSelector()
+        self._zarr_selector = ZarrSelector(label="Plate")
         self._plate_mgr = PlateManager(self._zarr_selector)
         self.well = Select(label="Wells", enabled=True, allow_multiple=False)
         self.select_well = PushButton(text="➡ Go to well", enabled=False)

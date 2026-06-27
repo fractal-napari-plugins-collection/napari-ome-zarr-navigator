@@ -7,7 +7,6 @@ from importlib.resources import files
 from magicgui.widgets import (
     Container,
     FileEdit,
-    Label,
     LineEdit,
     PushButton,
     RadioButtons,
@@ -111,13 +110,14 @@ class LoaderState(Enum):
 
 
 class ZarrSelector(Container):
-    def __init__(self, label="Input Source", file_mode="d", debounce_ms=500):
+    def __init__(self, label="Image", file_mode="d", debounce_ms=500):
         # Source selector
         self._source_selector = RadioButtons(
             label="Source",
             choices=["File", "HTTP"],
             orientation="horizontal",
             value="File",  # type: ignore[call-arg]
+            tooltip="File: select a local OME-Zarr directory.\nHTTP: enter a remote OME-Zarr URL.",
         )
 
         # internal state
@@ -127,6 +127,13 @@ class ZarrSelector(Container):
 
         # Inputs
         self._file_picker = FileEdit(label="Zarr file", mode=file_mode)  # type: ignore[arg-type]
+        if label == "Plate":
+            self._file_picker.tooltip = "The path to the OME-Zarr plate"
+        else:
+            self._file_picker.tooltip = (
+                "The path to the OME-Zarr image "
+                "(if it's in a plate, e.g. /path/to/plate.zarr/A/01/0)"
+            )
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
 
@@ -156,10 +163,10 @@ class ZarrSelector(Container):
         self._http_token.hide()
 
         self._main = Container(
-            widgets=[Label(value=label), self._source_selector, self._stack],  # type: ignore[call-arg, arg-type]
+            widgets=[self._source_selector, self._stack],  # type: ignore[arg-type]
             labels=False,
         )
-        super().__init__(widgets=[self._main], labels=False)
+        super().__init__(widgets=[self._main], labels=False, label=label)
 
         # Debounce
         self._timer = QTimer()
