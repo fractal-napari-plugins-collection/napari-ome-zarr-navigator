@@ -78,7 +78,14 @@ class ROIAnnotator(Container):
         self._label_layer_picker.hide()
         self._label_layer_picker.changed.connect(self._on_label_layer_selected)
 
-        self._save_section_label = Label(value="─── Save ROI Table ───")
+        self._save_section_label = PushButton(
+            text="─── Save ROI Table ───", enabled=False
+        )
+        self._save_section_label.native.setStyleSheet(
+            "QPushButton { color: gray; font-size: 9pt; border: none;"
+            " background: transparent; padding: 4px 0px; }"
+            "QPushButton:disabled { color: gray; background: transparent; }"
+        )
 
         self._save_type_picker = ComboBox(
             label="Save as",
@@ -122,6 +129,7 @@ class ROIAnnotator(Container):
         self._remote_save_folder.hide()
         self._save_btn = PushButton(text="Save ROI Table", enabled=False)
         self._save_btn.tooltip = "Select a Zarr image to enable saving"
+        self._save_btn.native.setStyleSheet("font-weight: bold;")
 
         self._mode_selector.changed.connect(self._on_mode_changed)
         self._init_layer_btn.clicked.connect(self._on_main_btn_clicked)
@@ -880,7 +888,7 @@ class ROIAnnotatorImage(ROIAnnotator):
         token: str | None = None,
         source: str = "File",
     ):
-        self.zarr_selector = ZarrSelector()
+        self.zarr_selector = ZarrSelector(label="Image")
 
         extra: list = [self.zarr_selector]
         if zarr_url:
@@ -891,25 +899,42 @@ class ROIAnnotatorImage(ROIAnnotator):
         super().__init__(viewer=viewer, extra_widgets=extra)
         self.zarr_selector.on_change(self._on_selector_changed)
 
+        self._roi_loader_dock = None
+
         if zarr_url:
             self.zarr_selector.configure(source=source, url=zarr_url, token=token)
             self.zarr_selector.hide()
             self._on_selector_changed()
         else:
+            self._append_cross_launch_separator()
             self._btn_launch_loader = PushButton(text="Load ROIs")
             self._btn_launch_loader.clicked.connect(self._launch_roi_loader)
             self.append(self._btn_launch_loader)
 
+    def _append_cross_launch_separator(self) -> None:
+        sep = PushButton(text="─── Open widgets ───", enabled=False)
+        sep.native.setStyleSheet(
+            "QPushButton { color: gray; font-size: 9pt; border: none;"
+            " background: transparent; padding: 4px 0px; }"
+            "QPushButton:disabled { color: gray; background: transparent; }"
+        )
+        self.append(sep)
+
     def _launch_roi_loader(self):
+        from contextlib import suppress
+
         from napari_ome_zarr_navigator.roi_loader import ROILoaderImage
 
+        if self._roi_loader_dock is not None:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(self._roi_loader_dock)  # type: ignore[arg-type]
         loader = ROILoaderImage(
             viewer=self._viewer,
             zarr_url=self.zarr_selector.url,
             token=self.zarr_selector.token,
             source=self.zarr_selector.source,
         )
-        self._viewer.window.add_dock_widget(
+        self._roi_loader_dock = self._viewer.window.add_dock_widget(
             widget=loader,
             name="ROI Loader",
             tabify=True,
@@ -1011,9 +1036,19 @@ class ROIAnnotatorPlate(ROIAnnotator):
         if zarr_images:
             self._on_image_selected()
 
+        self._append_cross_launch_separator()
         self._btn_launch_loader = PushButton(text="Open ROI Loader")
         self._btn_launch_loader.clicked.connect(self._launch_roi_loader)
         self.append(self._btn_launch_loader)
+
+    def _append_cross_launch_separator(self) -> None:
+        sep = PushButton(text="─── Open widgets ───", enabled=False)
+        sep.native.setStyleSheet(
+            "QPushButton { color: gray; font-size: 9pt; border: none;"
+            " background: transparent; padding: 4px 0px; }"
+            "QPushButton:disabled { color: gray; background: transparent; }"
+        )
+        self.append(sep)
 
     def _launch_roi_loader(self):
         from contextlib import suppress

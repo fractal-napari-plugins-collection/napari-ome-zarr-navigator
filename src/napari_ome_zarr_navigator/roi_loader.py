@@ -103,6 +103,7 @@ class ROILoader(Container):
         self._advanced_container.visible = False
 
         self._run_button = PushButton(value=False, text="Load ROI")
+        self._run_button.native.setStyleSheet("font-weight: bold;")
         self._refresh_tables_btn = PushButton(text="↺", enabled=False)
         self._refresh_tables_btn.tooltip = "Refresh ROI table selection"
         self._refresh_tables_btn.native.setFixedWidth(28)
@@ -142,6 +143,19 @@ class ROILoader(Container):
             widgets = extra_widgets + widgets
 
         super().__init__(widgets=widgets)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _append_cross_launch_separator(self) -> None:
+        sep = PushButton(text="─── Open widgets ───", enabled=False)
+        sep.native.setStyleSheet(
+            "QPushButton { color: gray; font-size: 9pt; border: none;"
+            " background: transparent; padding: 4px 0px; }"
+            "QPushButton:disabled { color: gray; background: transparent; }"
+        )
+        self.append(sep)
 
     # ------------------------------------------------------------------
     # Advanced settings toggle
@@ -219,6 +233,17 @@ class ROILoader(Container):
         w = _get()  # type: ignore[call-arg]
         w.returned.connect(self._on_tables_ready)
         w.start()
+
+    def refresh_labels(self) -> None:
+        """Re-fetch the label list from disk and update the label picker."""
+        if self._ome_zarr_container is None:
+            return
+        try:
+            labels = self._ome_zarr_container.list_labels()
+        except Exception:  # noqa: BLE001
+            labels = []
+        self._label_picker.choices = labels
+        self._label_picker._default_choices = labels
 
     def get_roi_tables(self) -> list[str]:
         """
@@ -510,7 +535,7 @@ class ROILoaderImage(ROILoader):
         token: str | None = None,
         source: str = "File",
     ):
-        self.zarr_selector = ZarrSelector()
+        self.zarr_selector = ZarrSelector(label="Image")
 
         extra: list = [self.zarr_selector]
         if zarr_url:
@@ -523,26 +548,66 @@ class ROILoaderImage(ROILoader):
             extra_widgets=extra,
         )
         self.zarr_selector.on_change(self.update_image_selection)
+        self._label_saver_dock = None
+        self._roi_annotator_dock = None
 
         if zarr_url:
             self.zarr_selector.configure(source=source, url=zarr_url, token=token)
             self.zarr_selector.hide()
             self.update_image_selection()
         else:
-            self._btn_launch_annotator = PushButton(text="Annotate ROIs interactively")
+            self._append_cross_launch_separator()
+            self._btn_launch_annotator = PushButton(
+                text="Annotate ROIs interactively", enabled=False
+            )
             self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
             self.append(self._btn_launch_annotator)
 
+        self._btn_save_label = PushButton(
+            text="Save label layer to OME-Zarr", enabled=False
+        )
+        self._btn_save_label.clicked.connect(self._launch_label_saver)
+        if zarr_url:
+            self._append_cross_launch_separator()
+        self.append(self._btn_save_label)
+
+    def _launch_label_saver(self):
+        from contextlib import suppress
+
+        from napari_ome_zarr_navigator.label_saver import LabelSaverImage
+
+        if self._label_saver_dock is not None:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(self._label_saver_dock)  # type: ignore[arg-type]
+        saver = LabelSaverImage(
+            viewer=self._viewer,
+            zarr_url=self.zarr_selector.url,
+            token=self.zarr_selector.token,
+            source=self.zarr_selector.source,
+            roi_loader=self,
+        )
+        self._label_saver_dock = self._viewer.window.add_dock_widget(
+            saver,
+            name="Save label layer to OME-Zarr",
+            tabify=True,
+            allowed_areas=["right"],
+        )
+
     def _launch_roi_annotator(self):
+        from contextlib import suppress
+
         from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorImage
 
+        if self._roi_annotator_dock is not None:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(self._roi_annotator_dock)  # type: ignore[arg-type]
         annotator = ROIAnnotatorImage(
             viewer=self._viewer,
             zarr_url=self.zarr_selector.url,
             token=self.zarr_selector.token,
             source=self.zarr_selector.source,
         )
-        self._viewer.window.add_dock_widget(
+        self._roi_annotator_dock = self._viewer.window.add_dock_widget(
             widget=annotator,
             name="ROI Annotator",
             tabify=True,
@@ -568,6 +633,19 @@ class ROILoaderImage(ROILoader):
         worker = self._load_container(store)  # type: ignore[call-arg]
         worker.returned.connect(self._on_image_container_ready)
         worker.start()
+
+    def _on_image_container_ready(self, container) -> None:
+        super()._on_image_container_ready(container)
+        enabled = container is not None
+        self._btn_save_label.enabled = enabled
+        if hasattr(self, "_btn_launch_annotator"):
+            self._btn_launch_annotator.enabled = enabled
+
+    def reset_widgets(self) -> None:
+        super().reset_widgets()
+        self._btn_save_label.enabled = False
+        if hasattr(self, "_btn_launch_annotator"):
+            self._btn_launch_annotator.enabled = False
 
 
 class ROILoaderPlate(ROILoader):
@@ -612,9 +690,44 @@ class ROILoaderPlate(ROILoader):
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
         )
 
-        self._btn_launch_annotator = PushButton(text="Open ROI Annotator")
+        self._label_saver_dock = None
+        self._append_cross_launch_separator()
+
+        self._btn_launch_annotator = PushButton(
+            text="Open ROI Annotator", enabled=False
+        )
         self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
         self.append(self._btn_launch_annotator)
+
+        self._btn_save_label = PushButton(
+            text="Save label layer to OME-Zarr", enabled=False
+        )
+        self._btn_save_label.clicked.connect(self._launch_label_saver)
+        self.append(self._btn_save_label)
+
+    def _launch_label_saver(self):
+        from contextlib import suppress
+
+        from napari_ome_zarr_navigator.label_saver import LabelSaverImage
+
+        if self._label_saver_dock is not None:
+            with suppress(RuntimeError):
+                self._viewer.window.remove_dock_widget(self._label_saver_dock)  # type: ignore[arg-type]
+        image_path = self._zarr_picker.value
+        zarr_url = f"{self.plate_id}/{self.row}/{self.col}/{image_path}"
+        source = "File" if self.is_local else "HTTP"
+        saver = LabelSaverImage(
+            viewer=self._viewer,
+            zarr_url=zarr_url,
+            source=source,
+            roi_loader=self,
+        )
+        self._label_saver_dock = self._viewer.window.add_dock_widget(
+            saver,
+            name="Save label layer to OME-Zarr",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def _launch_roi_annotator(self):
         from contextlib import suppress
@@ -645,6 +758,17 @@ class ROILoaderPlate(ROILoader):
             allowed_areas=["right"],
         )
         self.plate_browser._wire_annotator_loader()
+
+    def _on_image_container_ready(self, container) -> None:
+        super()._on_image_container_ready(container)
+        enabled = container is not None
+        self._btn_save_label.enabled = enabled
+        self._btn_launch_annotator.enabled = enabled
+
+    def reset_widgets(self) -> None:
+        super().reset_widgets()
+        self._btn_save_label.enabled = False
+        self._btn_launch_annotator.enabled = False
 
     def get_available_ome_zarr_images(self):
         well = self.plate.get_well(row=self.row, column=self.col)
