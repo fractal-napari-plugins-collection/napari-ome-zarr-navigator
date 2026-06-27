@@ -55,6 +55,7 @@ class LabelSaverImage(Container):
         self._ome_zarr_container = None
         self._last_saved_label: str | None = None
         self._pending_save_label: str | None = None
+        self._pending_save_masking_roi: bool = False
         self._zarr_url: str | None = zarr_url
         self._source: str = source
 
@@ -328,6 +329,7 @@ class LabelSaverImage(Container):
         layer_translate = tuple(float(v) for v in layer.translate)
 
         self._pending_save_label = label_name
+        self._pending_save_masking_roi = save_masking_roi
         self._btn_save.enabled = False
         self._btn_save.text = "Saving..."
 
@@ -763,6 +765,8 @@ class LabelSaverImage(Container):
                 self._load_container_async(self._zarr_url)
             if self._roi_loader is not None:
                 self._roi_loader.refresh_labels()
+                if self._pending_save_masking_roi:
+                    self._roi_loader.refresh_roi_tables()
         self._update_save_button_state()
 
     def _on_save_error(self, exc: Exception) -> None:
