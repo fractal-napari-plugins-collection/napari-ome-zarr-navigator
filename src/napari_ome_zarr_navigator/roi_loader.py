@@ -220,6 +220,17 @@ class ROILoader(Container):
         w.returned.connect(self._on_tables_ready)
         w.start()
 
+    def refresh_labels(self) -> None:
+        """Re-fetch the label list from disk and update the label picker."""
+        if self._ome_zarr_container is None:
+            return
+        try:
+            labels = self._ome_zarr_container.list_labels()
+        except Exception:  # noqa: BLE001
+            labels = []
+        self._label_picker.choices = labels
+        self._label_picker._default_choices = labels
+
     def get_roi_tables(self) -> list[str]:
         """
         List available ROI tables
@@ -524,6 +535,10 @@ class ROILoaderImage(ROILoader):
         )
         self.zarr_selector.on_change(self.update_image_selection)
 
+        self._btn_save_label = PushButton(text="Save label layer to OME-Zarr")
+        self._btn_save_label.clicked.connect(self._launch_label_saver)
+        self.append(self._btn_save_label)
+
         if zarr_url:
             self.zarr_selector.configure(source=source, url=zarr_url, token=token)
             self.zarr_selector.hide()
@@ -532,6 +547,23 @@ class ROILoaderImage(ROILoader):
             self._btn_launch_annotator = PushButton(text="Annotate ROIs interactively")
             self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
             self.append(self._btn_launch_annotator)
+
+    def _launch_label_saver(self):
+        from napari_ome_zarr_navigator.label_saver import LabelSaverImage
+
+        saver = LabelSaverImage(
+            viewer=self._viewer,
+            zarr_url=self.zarr_selector.url,
+            token=self.zarr_selector.token,
+            source=self.zarr_selector.source,
+            roi_loader=self,
+        )
+        self._viewer.window.add_dock_widget(
+            saver,
+            name="Save label layer to OME-Zarr",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def _launch_roi_annotator(self):
         from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorImage
@@ -615,6 +647,29 @@ class ROILoaderPlate(ROILoader):
         self._btn_launch_annotator = PushButton(text="Open ROI Annotator")
         self._btn_launch_annotator.clicked.connect(self._launch_roi_annotator)
         self.append(self._btn_launch_annotator)
+
+        self._btn_save_label = PushButton(text="Save label layer to OME-Zarr")
+        self._btn_save_label.clicked.connect(self._launch_label_saver)
+        self.append(self._btn_save_label)
+
+    def _launch_label_saver(self):
+        from napari_ome_zarr_navigator.label_saver import LabelSaverImage
+
+        image_path = self._zarr_picker.value
+        zarr_url = f"{self.plate_id}/{self.row}/{self.col}/{image_path}"
+        source = "File" if self.is_local else "HTTP"
+        saver = LabelSaverImage(
+            viewer=self._viewer,
+            zarr_url=zarr_url,
+            source=source,
+            roi_loader=self,
+        )
+        self._viewer.window.add_dock_widget(
+            saver,
+            name="Save label layer to OME-Zarr",
+            tabify=True,
+            allowed_areas=["right"],
+        )
 
     def _launch_roi_annotator(self):
         from contextlib import suppress

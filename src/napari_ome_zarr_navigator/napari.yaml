@@ -15,6 +15,9 @@ contributions:
     - id: napari-ome-zarr-navigator.make_roi_annotator
       python_name: napari_ome_zarr_navigator.roi_annotator:ROIAnnotatorImage
       title: ROI Annotator
+    - id: napari-ome-zarr-navigator.make_label_saver
+      python_name: napari_ome_zarr_navigator.label_saver:LabelSaverImage
+      title: Save label layer to OME-Zarr
     - id: napari-ome-zarr-navigator.hiPSC_zarr
       python_name: napari_ome_zarr_navigator._sample_data:hiPSC_zarr
       title: Load hiPSC sample data from Zenodo
@@ -35,3 +38,5 @@ contributions:
       display_name: ROI Loader
     - command: napari-ome-zarr-navigator.make_roi_annotator
       display_name: ROI Annotator
+    - command: napari-ome-zarr-navigator.make_label_saver
+      display_name: Save label layer to OME-Zarr
