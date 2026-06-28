@@ -83,13 +83,13 @@ Three write modes cover the main use cases:
 
 Load an image with the ROI Loader, segment or annotate it in napari, then open the Save Labels widget. Select the label layer, choose a name, and click **Save label to OME-Zarr**. The pixel size metadata is taken from the napari label layer. Optionally enable **Save masking ROI table** to derive per-object bounding-box ROIs at the same time.
 
-<!-- SCREENSHOT: save_labels_new — widget with new-label mode, a label layer selected, and the Save button active -->
+<img width="1631" alt="save_new_label" src="https://github.com/user-attachments/assets/bda2e077-155c-4a08-a1c1-e79673841ab4" />
 
 #### Proof-reading labels ROI by ROI
 
 Load a single ROI using the ROI Loader, edit the label layer in napari, then switch the write mode to **Edit existing label** and save. Only the pixels within the loaded ROI are written back; the rest of the label is untouched. Importantly, neither the ROI loader nor the label saving perform masking. Thus, if you load masking ROI tables, be aware that labels outside the mask will still load and you should not remove them, otherwise they get removed from the final label image.
 
-<!-- SCREENSHOT: save_labels_edit — widget in Edit mode showing the ROI Loader integration and the refresh flow -->
+<img width="1631" alt="edit_label" src="https://github.com/user-attachments/assets/49495b59-af2c-45d8-b329-90d2236fa020" />
 
 #### Remote OME-Zarr stores
 
