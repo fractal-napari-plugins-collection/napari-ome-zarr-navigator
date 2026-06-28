@@ -12,7 +12,7 @@ authors = [
     { name = "Fabio Steffen", email = "fabio.steffen@uzh.ch" },
     { name = "Joel Luethi", email = "joel.luethi@uzh.ch" },
 ]
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.15"
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Framework :: napari",
@@ -23,6 +23,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
