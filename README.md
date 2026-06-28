@@ -6,7 +6,7 @@
 [![tests](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions/workflows/test_and_deploy.yml/badge.svg?branch=main)](https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator/actions)
 [![codecov](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator/graph/badge.svg?token=Mg1081BoRA)](https://codecov.io/gh/fractal-napari-plugins-collection/napari-ome-zarr-navigator)
 
-A plugin to browse OME-Zarr plates by conditions and load images, labels and features from ROIs
+A plugin to interact with OME-Zarr images and plates. Enables integrating OME-Zarrs & [Fractal tables](https://biovisioncenter.github.io/ngio/stable/table_specs/overview/), browsing plates by conditions, loading ROIs from ROI tables, loading features from feature tables, annotating new ROI tables and saving labels back into OME-Zarr.
 
 
 ## Usage
