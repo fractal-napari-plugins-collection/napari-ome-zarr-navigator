@@ -11,6 +11,40 @@ _WM_EDIT = "Edit existing label"
 _WM_RESET = "Reset existing label"
 _WRITE_MODES = [_WM_NEW, _WM_EDIT, _WM_RESET]
 
+_SCALE_REL_TOL = 1e-4  # 0.01% — allows float rounding, rejects factor-2 mismatches
+
+
+def _validate_scale_matches_existing_label(
+    layer_scale: tuple,
+    axes_str: str,
+    label_name: str,
+    container,
+) -> tuple[bool, str]:
+    """Check that layer_scale matches the full-resolution pixel size of an existing label.
+
+    Only checks y and x axes — those are the ones that control pixel indexing.
+    Returns (True, "") on a match, (False, message) on a mismatch.
+    """
+    try:
+        label_obj = container.get_label(label_name)
+    except Exception:  # noqa: BLE001
+        return True, ""
+
+    axes_list = list(axes_str)
+    for ax in ("y", "x"):
+        if ax not in axes_list:
+            continue
+        layer_ax = abs(float(layer_scale[axes_list.index(ax)]))
+        label_ax = abs(float(getattr(label_obj.pixel_size, ax)))
+        if label_ax > 0 and abs(layer_ax - label_ax) / label_ax > _SCALE_REL_TOL:
+            return (
+                False,
+                f"Label layer scale ({layer_ax:.6g} along '{ax}') does not "
+                f"match the full pixel size of '{label_name}' ({label_ax:.6g}). "
+                f"To edit this label, work at the resolution of '{label_name}'.",
+            )
+    return True, ""
+
 
 def _expand_label_dims(
     label_array: np.ndarray,

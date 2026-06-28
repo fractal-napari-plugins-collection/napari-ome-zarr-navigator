@@ -12,6 +12,7 @@ from napari_ome_zarr_navigator._label_save_utils import (
     _expand_label_dims,
     _extract_pixel_sizes,
     _insert_c_dim,
+    _validate_scale_matches_existing_label,
     _validate_tz,
 )
 from napari_ome_zarr_navigator.label_saver import LabelSaverImage
@@ -568,6 +569,83 @@ def test_insert_c_dim_without_channel_axis(synthetic_image_path):
     img = open_ome_zarr_container(synthetic_image_path).get_image()
     result = _insert_c_dim((64, 64), img)
     assert result == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# _validate_scale_matches_existing_label unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_validate_scale_matches_existing_label_passes(make_napari_viewer, tmp_path):
+    """Exact-match scale passes the check."""
+    image_dir = tmp_path / "test.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir), shape=(1, 64, 64), table_backend="csv"
+    )
+    viewer = make_napari_viewer()
+    layer = _make_full_label_layer(viewer, str(image_dir), name="lbl")
+    saver = LabelSaverImage(viewer=viewer)
+    saver._do_save_impl(**_base_kwargs(str(image_dir), layer, _WM_NEW))
+
+    container = open_ome_zarr_container(str(image_dir), mode="r")
+    img = container.get_image()
+    ok, msg = _validate_scale_matches_existing_label(
+        (img.pixel_size.y, img.pixel_size.x), "yx", "lbl", container
+    )
+    assert ok
+    assert msg == ""
+
+
+def test_validate_scale_matches_existing_label_fails_on_mismatch(
+    make_napari_viewer, tmp_path
+):
+    """Coarser scale (2×) is rejected and message names the label."""
+    image_dir = tmp_path / "test.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir), shape=(1, 64, 64), table_backend="csv"
+    )
+    viewer = make_napari_viewer()
+    layer = _make_full_label_layer(viewer, str(image_dir), name="lbl")
+    saver = LabelSaverImage(viewer=viewer)
+    saver._do_save_impl(**_base_kwargs(str(image_dir), layer, _WM_NEW))
+
+    container = open_ome_zarr_container(str(image_dir), mode="r")
+    img = container.get_image()
+    coarse_scale = (img.pixel_size.y * 2, img.pixel_size.x * 2)
+    ok, msg = _validate_scale_matches_existing_label(
+        coarse_scale, "yx", "lbl", container
+    )
+    assert not ok
+    assert "lbl" in msg
+
+
+@pytest.mark.parametrize("write_mode", [_WM_EDIT, _WM_RESET])
+def test_save_rejected_on_scale_mismatch(make_napari_viewer, tmp_path, write_mode):
+    """Edit and reset modes both reject a layer whose scale doesn't match the label."""
+    image_dir = tmp_path / "test.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir), shape=(1, 64, 64), table_backend="csv"
+    )
+    viewer = make_napari_viewer()
+
+    # Create the label at full resolution
+    full_layer = _make_full_label_layer(viewer, str(image_dir), name="seg")
+    saver = LabelSaverImage(viewer=viewer)
+    assert (
+        saver._do_save_impl(**_base_kwargs(str(image_dir), full_layer, _WM_NEW)) is True
+    )
+
+    # Attempt to edit/reset with a 2× coarser layer
+    container = open_ome_zarr_container(str(image_dir), mode="r")
+    img = container.get_image()
+    coarse_layer = viewer.add_labels(
+        np.ones((32, 32), dtype=np.uint32),
+        name="seg_coarse",
+        scale=(img.pixel_size.y * 2, img.pixel_size.x * 2),
+    )
+    kwargs = _base_kwargs(str(image_dir), coarse_layer, write_mode)
+    kwargs["label_name"] = "seg"
+    assert saver._do_save_impl(**kwargs) is False
 
 
 # ---------------------------------------------------------------------------

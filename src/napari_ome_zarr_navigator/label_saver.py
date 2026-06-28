@@ -35,6 +35,7 @@ from napari_ome_zarr_navigator._label_save_utils import (
     _expand_label_dims,
     _extract_pixel_sizes,
     _insert_c_dim,
+    _validate_scale_matches_existing_label,
     _validate_tz,
 )
 from napari_ome_zarr_navigator.util import ZarrSelector
@@ -504,6 +505,17 @@ class LabelSaverImage(Container):
         except ValueError as exc:
             logger.warning("Cannot save label: %s", exc)
             return False
+
+        # For edit/reset modes, reject if the layer resolution doesn't match
+        # the existing label's full-resolution pixel size — writing at the wrong
+        # scale maps pixels to incorrect locations in the stored array.
+        if write_mode in (_WM_EDIT, _WM_RESET) and not output_folder:
+            ok, msg = _validate_scale_matches_existing_label(
+                layer_scale, axes_str, label_name, container
+            )
+            if not ok:
+                logger.warning("Cannot save label: %s", msg)
+                return False
 
         pixelsize_yx, z_spacing, time_spacing = _extract_pixel_sizes(
             layer_scale, axes_str, img
