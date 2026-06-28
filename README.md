@@ -8,16 +8,19 @@
 
 A plugin to interact with OME-Zarr images and plates. Enables integrating OME-Zarrs & [Fractal tables](https://biovisioncenter.github.io/ngio/stable/table_specs/overview/), browsing plates by conditions, loading ROIs from ROI tables, loading features from feature tables, annotating new ROI tables and saving labels back into OME-Zarr.
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=aUlbiQJXx_I">
+    <img src="https://img.youtube.com/vi/aUlbiQJXx_I/maxresdefault.jpg" width="1080" alt="Watch the demo">
+  </a>
+</p>
+(click thumbnail above to see the walkthrough video)
+
 
 ## Usage
 
 ### Plate Browser
 
-The Plate Browser loads an OME-Zarr plate from the local filesystem or via authenticated HTTPS (e.g. a [Fractal Server](https://fractal-analytics-platform.github.io/) instance). It also auto-detects plates opened via [napari-ome-zarr](https://github.com/ome/napari-ome-zarr).
-
-<img width="1624" alt="navigator_plate_browser" src="https://github.com/user-attachments/assets/ed1f1c13-1055-4b21-a3e6-100279f64f5b" />
-
-The Plate Browser lets you zoom to a selected well ("Go to well"), which draws a bounding box and centers the camera on that well.
+The Plate Browser loads an OME-Zarr plate from the local filesystem or via authenticated HTTPS (e.g. a [Fractal Server](https://fractal-analytics-platform.github.io/) instance). It also auto-detects plates opened via [napari-ome-zarr](https://github.com/ome/napari-ome-zarr). The Plate Browser lets you zoom to a selected well ("Go to well"), which draws a bounding box and centers the camera on that well.
 
 <img width="1624" alt="plate_browser_go_to_well" src="https://github.com/user-attachments/assets/c83c1daf-a5d2-41b7-8685-564f80eb0122" />
 
