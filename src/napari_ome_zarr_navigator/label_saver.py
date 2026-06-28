@@ -25,17 +25,23 @@ except ImportError:
     _ngio_derive_label = None  # type: ignore[assignment]
     _NGIO_REMOTE_LABEL_AVAILABLE = False
 
+from napari_ome_zarr_navigator._label_save_utils import (
+    _WM_EDIT,
+    _WM_NEW,
+    _WM_RESET,
+    _WRITE_MODES,
+    _apply_write_region,
+    _compute_write_region,
+    _expand_label_dims,
+    _extract_pixel_sizes,
+    _insert_c_dim,
+    _validate_tz,
+)
 from napari_ome_zarr_navigator.util import ZarrSelector
 
 logger = logging.getLogger(__name__)
 
 _BACKEND_CHOICES = ["csv", "anndata", "json", "parquet"]
-
-# Write-mode constants (used as ComboBox values and in _do_save_impl branching)
-_WM_NEW = "Save as new label"
-_WM_EDIT = "Edit existing label"
-_WM_RESET = "Reset existing label"
-_WRITE_MODES = [_WM_NEW, _WM_EDIT, _WM_RESET]
 
 
 class LabelSaverImage(Container):
@@ -436,215 +442,6 @@ class LabelSaverImage(Container):
         worker.start()
 
     # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _expand_label_dims(
-        label_array: np.ndarray,
-        layer_scale: tuple,
-        axes_str: str,
-        img,
-    ) -> tuple[np.ndarray, tuple, str]:
-        """Expand label with singleton dims to match the image's non-channel axes.
-
-        If the image has extra axes (e.g. z=1) not present in the label, they are
-        inserted as singleton dimensions.  Raises ValueError when a missing axis has
-        size > 1 (can't auto-expand).
-        """
-        img_non_c_axes = [a for a in img.axes if a != "c"]
-        if label_array.ndim == len(img_non_c_axes):
-            return label_array, layer_scale, axes_str
-
-        label_axes_list = list(axes_str)
-        layer_scale_list = list(layer_scale)
-
-        for i, a in enumerate(img_non_c_axes):
-            if a not in label_axes_list:
-                img_a_idx = list(img.axes).index(a)
-                img_a_size = img.shape[img_a_idx]
-                if img_a_size == 1:
-                    label_array = np.expand_dims(label_array, axis=i)
-                    label_axes_list.insert(i, a)
-                    layer_scale_list.insert(i, float(getattr(img.pixel_size, a)))
-                else:
-                    raise ValueError(
-                        f"Cannot save a {len(axes_str)}D label for an image whose "
-                        f"'{a}' axis has size {img_a_size}. "
-                        "The label must cover the same number of dimensions as the image."
-                    )
-
-        return label_array, tuple(layer_scale_list), "".join(label_axes_list)
-
-    @staticmethod
-    def _insert_c_dim(shape: tuple, img) -> tuple:
-        """Insert the c dimension into *shape* when the reference image has a c axis.
-
-        ngio's ``derive_label`` validates ``len(shape) == len(ref_image.shape)``
-        *before* it applies ``channels_policy='squeeze'``, so a label shape
-        (z, y, x) is rejected for a (c, z, y, x) image even though the c axis
-        is removed by the policy immediately afterwards.
-
-        Workaround: insert the image's c size at the correct axis position so
-        the length check passes; ngio then squeezes it out, leaving a label
-        without a channel axis.  For images without c the shape is returned
-        unchanged.
-
-        See https://github.com/BioVisionCenter/ngio/issues/195
-        """
-        if "c" not in img.axes:
-            return shape
-        c_idx = list(img.axes).index("c")
-        c_size = img.shape[c_idx]
-        return shape[:c_idx] + (c_size,) + shape[c_idx:]
-
-    @staticmethod
-    def _validate_full(
-        label_array: np.ndarray,
-        layer_scale: tuple,
-        axes_str: str,
-        img,
-    ) -> tuple[bool, str]:
-        """Check yx spatial extents, z plane count, and timepoint count."""
-        axes_list = list(axes_str)
-        img_axes = list(img.axes)
-
-        for a in ("z", "y", "x"):
-            if a not in img_axes or a not in axes_list:
-                continue
-            img_extent = img.shape[img_axes.index(a)] * getattr(img.pixel_size, a)
-            lbl_idx = axes_list.index(a)
-            lbl_extent = label_array.shape[lbl_idx] * abs(float(layer_scale[lbl_idx]))
-            if img_extent > 0 and abs(img_extent - lbl_extent) > 0.01 * img_extent:
-                return (
-                    False,
-                    f"Label extent along '{a}' ({lbl_extent:.4g} µm) does not match "
-                    f"the OME-Zarr image ({img_extent:.4g} µm). "
-                    "The label must cover the same spatial extent as the image.",
-                )
-
-        if "t" in img_axes and "t" in axes_list:
-            img_t = img.shape[img_axes.index("t")]
-            lbl_t = label_array.shape[axes_list.index("t")]
-            if img_t != lbl_t:
-                return (
-                    False,
-                    f"Label has {lbl_t} timepoint(s) but the image has {img_t}. "
-                    "The number of timepoints must match.",
-                )
-
-        return True, ""
-
-    @staticmethod
-    def _validate_tz(
-        label_array: np.ndarray,
-        axes_str: str,
-        img,
-    ) -> tuple[bool, str]:
-        """Check z plane count and timepoint count (no yx extent check)."""
-        axes_list = list(axes_str)
-        img_axes = list(img.axes)
-
-        if "z" in img_axes and "z" in axes_list:
-            img_z = img.shape[img_axes.index("z")]
-            lbl_z = label_array.shape[axes_list.index("z")]
-            if img_z != lbl_z:
-                return (
-                    False,
-                    f"Label has {lbl_z} z-plane(s) but the image has {img_z}. "
-                    "The number of z-planes must match.",
-                )
-
-        if "t" in img_axes and "t" in axes_list:
-            img_t = img.shape[img_axes.index("t")]
-            lbl_t = label_array.shape[axes_list.index("t")]
-            if img_t != lbl_t:
-                return (
-                    False,
-                    f"Label has {lbl_t} timepoint(s) but the image has {img_t}. "
-                    "The number of timepoints must match.",
-                )
-
-        return True, ""
-
-    @staticmethod
-    def _extract_pixel_sizes(layer_scale: tuple, axes_str: str, img) -> tuple:
-        """Return (pixelsize_yx, z_spacing, time_spacing) for derive_label."""
-        axes_list = list(axes_str)
-        pixelsize_yx = None
-        z_spacing = None
-        time_spacing = None
-        if "y" in axes_list and "x" in axes_list:
-            y_idx = axes_list.index("y")
-            x_idx = axes_list.index("x")
-            pixelsize_yx = (
-                abs(float(layer_scale[y_idx])),
-                abs(float(layer_scale[x_idx])),
-            )
-        if "z" in axes_list:
-            z_spacing = abs(float(layer_scale[axes_list.index("z")]))
-        if "t" in axes_list:
-            time_spacing = float(img.pixel_size.t)
-        return pixelsize_yx, z_spacing, time_spacing
-
-    @staticmethod
-    def _compute_write_region(
-        layer_translate: tuple,
-        layer_scale: tuple,
-        plate_translation: tuple,
-        label_array: np.ndarray,
-        axes_str: str,
-        img,
-    ) -> tuple[int, int, int, int, int, int, bool]:
-        """Compute pixel offset and full-image dims for sub-ROI write modes.
-
-        Returns (y0, x0, y1, x1, full_h, full_w, is_partial).
-        layer_translate includes the plate/well offset; plate_translation is
-        subtracted to get the image-relative world offset.
-        """
-        axes_list = list(axes_str)
-        img_axes = list(img.axes)
-
-        y_scale = (
-            abs(float(layer_scale[axes_list.index("y")])) if "y" in axes_list else 1.0
-        )
-        x_scale = (
-            abs(float(layer_scale[axes_list.index("x")])) if "x" in axes_list else 1.0
-        )
-
-        # Image-relative world offset of the label's top-left corner
-        y_world = float(layer_translate[-2]) - float(plate_translation[0])
-        x_world = float(layer_translate[-1]) - float(plate_translation[1])
-        y0_px = round(y_world / y_scale)
-        x0_px = round(x_world / x_scale)
-
-        # Full image extent at label's pixel size
-        img_y = img.shape[img_axes.index("y")] if "y" in img_axes else 0
-        img_x = img.shape[img_axes.index("x")] if "x" in img_axes else 0
-        full_h = round(img_y * img.pixel_size.y / y_scale)
-        full_w = round(img_x * img.pixel_size.x / x_scale)
-
-        label_h = (
-            label_array.shape[axes_list.index("y")] if "y" in axes_list else full_h
-        )
-        label_w = (
-            label_array.shape[axes_list.index("x")] if "x" in axes_list else full_w
-        )
-
-        # Clamp to full image bounds (guards against floating-point edge off-by-one)
-        y1_px = min(y0_px + label_h, full_h)
-        x1_px = min(x0_px + label_w, full_w)
-
-        if y0_px < 0 or x0_px < 0 or y0_px >= full_h or x0_px >= full_w:
-            raise ValueError(
-                f"Label offset (y={y0_px}, x={x0_px}) is outside the full image "
-                f"({full_h}×{full_w} px). Cannot write label."
-            )
-
-        is_partial = y0_px != 0 or x0_px != 0 or y1_px != full_h or x1_px != full_w
-        return y0_px, x0_px, y1_px, x1_px, full_h, full_w, is_partial
-
-    # ------------------------------------------------------------------
     # Core save implementation
     # ------------------------------------------------------------------
 
@@ -701,14 +498,14 @@ class LabelSaverImage(Container):
 
         # Expand singleton dims (e.g. 2D label for a z=1 image)
         try:
-            label_array, layer_scale, axes_str = self._expand_label_dims(
+            label_array, layer_scale, axes_str = _expand_label_dims(
                 label_array, layer_scale, axes_str, img
             )
         except ValueError as exc:
             logger.warning("Cannot save label: %s", exc)
             return False
 
-        pixelsize_yx, z_spacing, time_spacing = self._extract_pixel_sizes(
+        pixelsize_yx, z_spacing, time_spacing = _extract_pixel_sizes(
             layer_scale, axes_str, img
         )
 
@@ -735,20 +532,20 @@ class LabelSaverImage(Container):
                     ),
                 )
             return self._save_partial(
-                container,
-                img,
-                label_array,
-                layer_scale,
-                layer_translate,
-                axes_str,
-                label_name,
-                write_mode,
-                pixelsize_yx,
-                z_spacing,
-                time_spacing,
-                save_masking_roi,
-                masking_roi_table_name,
-                masking_roi_backend,
+                container=container,
+                img=img,
+                label_array=label_array,
+                layer_scale=layer_scale,
+                layer_translate=layer_translate,
+                axes_str=axes_str,
+                label_name=label_name,
+                write_mode=write_mode,
+                pixelsize_yx=pixelsize_yx,
+                z_spacing=z_spacing,
+                time_spacing=time_spacing,
+                save_masking_roi=save_masking_roi,
+                masking_roi_table_name=masking_roi_table_name,
+                masking_roi_backend=masking_roi_backend,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to save label '%s': %s", label_name, exc)
@@ -756,6 +553,7 @@ class LabelSaverImage(Container):
 
     def _save_partial(
         self,
+        *,
         container,
         img,
         label_array,
@@ -771,17 +569,16 @@ class LabelSaverImage(Container):
         masking_roi_table_name,
         masking_roi_backend,
     ) -> bool:
-        ok, msg = self._validate_tz(label_array, axes_str, img)
+        ok, msg = _validate_tz(label_array, axes_str, img)
         if not ok:
             logger.warning("Cannot save label: %s", msg)
             return False
 
         plate_translation = getattr(self._roi_loader, "translation", (0.0, 0.0))
-        y0, x0, y1, x1, full_h, full_w, is_partial = self._compute_write_region(
+        y0, x0, y1, x1, full_h, full_w, is_partial = _compute_write_region(
             layer_translate, layer_scale, plate_translation, label_array, axes_str, img
         )
 
-        # Build the full shape for derive_label (modes New / Reset)
         axes_list = list(axes_str)
         full_shape = list(label_array.shape)
         if "y" in axes_list:
@@ -792,7 +589,6 @@ class LabelSaverImage(Container):
 
         if write_mode == _WM_EDIT:
             label_obj = container.get_label(label_name)
-            label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
             logger.info(
                 "Appended label '%s' for region y=[%d:%d], x=[%d:%d]. "
                 "Pixels outside this region remain unchanged.",
@@ -806,15 +602,13 @@ class LabelSaverImage(Container):
             overwrite = write_mode == _WM_RESET
             label_obj = container.derive_label(
                 name=label_name,
-                shape=self._insert_c_dim(full_shape, img),
+                shape=_insert_c_dim(full_shape, img),
                 pixelsize=pixelsize_yx,
                 z_spacing=z_spacing,
                 time_spacing=time_spacing,
                 overwrite=overwrite,
             )
             if is_partial:
-                label_obj.set_array(np.zeros(full_shape, dtype=label_array.dtype))
-                label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
                 logger.warning(
                     "Label '%s' covers only y=[%d:%d], x=[%d:%d] of the full image "
                     "(%d×%d px). The rest is set to 0.",
@@ -826,10 +620,18 @@ class LabelSaverImage(Container):
                     full_h,
                     full_w,
                 )
-            else:
-                label_obj.set_array(label_array)
 
-        label_obj.consolidate()
+        _apply_write_region(
+            label_obj=label_obj,
+            label_array=label_array,
+            y0=y0,
+            x0=x0,
+            y1=y1,
+            x1=x1,
+            full_shape=full_shape,
+            is_partial=is_partial,
+            write_mode=write_mode,
+        )
 
         if save_masking_roi:
             self._write_masking_roi_table(
@@ -888,12 +690,12 @@ class LabelSaverImage(Container):
             )
             return False
 
-        ok, msg = self._validate_tz(label_array, axes_str, img)
+        ok, msg = _validate_tz(label_array, axes_str, img)
         if not ok:
             logger.warning("Cannot save label: %s", msg)
             return False
 
-        y0, x0, y1, x1, full_h, full_w, is_partial = self._compute_write_region(
+        y0, x0, y1, x1, full_h, full_w, is_partial = _compute_write_region(
             layer_translate, layer_scale, plate_translation, label_array, axes_str, img
         )
 
@@ -907,7 +709,6 @@ class LabelSaverImage(Container):
 
         if write_mode == _WM_EDIT:
             label_obj = open_label(str(labels_path / label_name))
-            label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
         else:
             label_dir = labels_path / label_name
             labels_path.mkdir(parents=True, exist_ok=True)
@@ -915,7 +716,7 @@ class LabelSaverImage(Container):
                 store=label_dir,
                 name=label_name,
                 ref_image=img,
-                shape=self._insert_c_dim(full_shape, img),
+                shape=_insert_c_dim(full_shape, img),
                 pixelsize=pixelsize_yx,
                 z_spacing=z_spacing,
                 time_spacing=time_spacing,
@@ -923,8 +724,6 @@ class LabelSaverImage(Container):
             )
             label_obj = open_label(str(labels_path / label_name))
             if is_partial:
-                label_obj.set_array(np.zeros(full_shape, dtype=label_array.dtype))
-                label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
                 logger.warning(
                     "Label '%s' covers only y=[%d:%d], x=[%d:%d] of the full image "
                     "(%d×%d px). The rest is set to 0.",
@@ -936,10 +735,18 @@ class LabelSaverImage(Container):
                     full_h,
                     full_w,
                 )
-            else:
-                label_obj.set_array(label_array)
 
-        label_obj.consolidate()
+        _apply_write_region(
+            label_obj=label_obj,
+            label_array=label_array,
+            y0=y0,
+            x0=x0,
+            y1=y1,
+            x1=x1,
+            full_shape=full_shape,
+            is_partial=is_partial,
+            write_mode=write_mode,
+        )
 
         if save_masking_roi:
             self._write_masking_roi_table_remote(

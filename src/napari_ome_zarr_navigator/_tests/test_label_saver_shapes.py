@@ -12,11 +12,11 @@ import numpy as np
 import pytest
 from ngio import create_synthetic_ome_zarr, open_ome_zarr_container
 
-from napari_ome_zarr_navigator.label_saver import (
+from napari_ome_zarr_navigator._label_save_utils import (
     _WM_EDIT,
     _WM_NEW,
-    LabelSaverImage,
 )
+from napari_ome_zarr_navigator.label_saver import LabelSaverImage
 
 # ---------------------------------------------------------------------------
 # Image configurations
@@ -84,7 +84,7 @@ def _make_zarr(tmp_path, shape, axes_names, name="test_image.zarr"):
 
 def _save_kwargs(image_path, layer, label_name, axes_str, write_mode):
     return {
-        "zarr_url": image_path,
+        "store": image_path,
         "label_array": np.asarray(layer.data),
         "layer_scale": tuple(layer.scale),
         "layer_translate": tuple(float(v) for v in layer.translate),

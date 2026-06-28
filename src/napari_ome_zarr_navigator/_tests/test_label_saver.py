@@ -4,12 +4,17 @@ import numpy as np
 import pytest
 from ngio import create_synthetic_ome_zarr, open_ome_zarr_container
 
-from napari_ome_zarr_navigator.label_saver import (
+from napari_ome_zarr_navigator._label_save_utils import (
     _WM_EDIT,
     _WM_NEW,
     _WM_RESET,
-    LabelSaverImage,
+    _compute_write_region,
+    _expand_label_dims,
+    _extract_pixel_sizes,
+    _insert_c_dim,
+    _validate_tz,
 )
+from napari_ome_zarr_navigator.label_saver import LabelSaverImage
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -156,43 +161,12 @@ def test_label_saver_write_mode_choices(make_napari_viewer):
 # ---------------------------------------------------------------------------
 
 
-def test_validate_full_matching_extents(synthetic_image_path):
-    container = open_ome_zarr_container(synthetic_image_path, mode="r")
-    img = container.get_image(path=container.level_paths[0])
-
-    label_array = np.zeros((64, 64), dtype=np.uint8)
-    layer_scale = (img.pixel_size.y, img.pixel_size.x)
-    ok, msg = LabelSaverImage._validate_full(label_array, layer_scale, "yx", img)
-    assert ok, msg
-
-
-def test_validate_full_mismatched_extents(synthetic_image_path):
-    container = open_ome_zarr_container(synthetic_image_path, mode="r")
-    img = container.get_image(path=container.level_paths[0])
-
-    label_array = np.zeros((32, 32), dtype=np.uint8)
-    layer_scale = (img.pixel_size.y, img.pixel_size.x)
-    ok, msg = LabelSaverImage._validate_full(label_array, layer_scale, "yx", img)
-    assert not ok
-    assert "extent" in msg.lower()
-
-
-def test_validate_full_timepoint_mismatch(synthetic_timeseries_image_path):
-    container = open_ome_zarr_container(synthetic_timeseries_image_path, mode="r")
-    img = container.get_image(path=container.level_paths[0])
-    label_array = np.zeros((2, 64, 64), dtype=np.uint8)
-    layer_scale = (img.pixel_size.t, img.pixel_size.y, img.pixel_size.x)
-    ok, msg = LabelSaverImage._validate_full(label_array, layer_scale, "tyx", img)
-    assert not ok
-    assert "timepoint" in msg.lower()
-
-
 def test_validate_tz_passes_when_no_tz(synthetic_image_path):
     container = open_ome_zarr_container(synthetic_image_path, mode="r")
     img = container.get_image(path=container.level_paths[0])
     # 2D label smaller than image: _validate_tz ignores yx extents
     label_array = np.zeros((32, 32), dtype=np.uint8)
-    ok, msg = LabelSaverImage._validate_tz(label_array, "yx", img)
+    ok, msg = _validate_tz(label_array, "yx", img)
     assert ok, msg
 
 
@@ -200,7 +174,7 @@ def test_validate_tz_fails_on_timepoint_mismatch(synthetic_timeseries_image_path
     container = open_ome_zarr_container(synthetic_timeseries_image_path, mode="r")
     img = container.get_image(path=container.level_paths[0])
     label_array = np.zeros((2, 32, 32), dtype=np.uint8)  # t=2, but image has t=3
-    ok, msg = LabelSaverImage._validate_tz(label_array, "tyx", img)
+    ok, msg = _validate_tz(label_array, "tyx", img)
     assert not ok
     assert "timepoint" in msg.lower()
 
@@ -243,7 +217,7 @@ def test_compute_write_region_full_image(synthetic_image_path):
     img = container.get_image(path=container.level_paths[0])
     label_array = np.zeros((64, 64), dtype=np.uint32)
     layer_scale = (img.pixel_size.y, img.pixel_size.x)
-    y0, x0, y1, x1, full_h, full_w, is_partial = LabelSaverImage._compute_write_region(
+    y0, x0, y1, x1, full_h, full_w, is_partial = _compute_write_region(
         layer_translate=(0.0, 0.0),
         layer_scale=layer_scale,
         plate_translation=(0.0, 0.0),
@@ -264,7 +238,7 @@ def test_compute_write_region_sub_roi(synthetic_image_path):
     label_array = np.zeros((32, 32), dtype=np.uint32)
     layer_scale = (pxy, pxx)
     layer_translate = (10 * pxy, 20 * pxx)
-    y0, x0, y1, x1, full_h, full_w, is_partial = LabelSaverImage._compute_write_region(
+    y0, x0, y1, x1, full_h, full_w, is_partial = _compute_write_region(
         layer_translate=layer_translate,
         layer_scale=layer_scale,
         plate_translation=(0.0, 0.0),
@@ -287,7 +261,7 @@ def test_compute_write_region_plate_offset_subtracted(synthetic_image_path):
     plate_offset = (100.0, 200.0)
     roi_offset = (10 * pxy, 20 * pxx)
     layer_translate = (plate_offset[0] + roi_offset[0], plate_offset[1] + roi_offset[1])
-    y0, x0, *_ = LabelSaverImage._compute_write_region(
+    y0, x0, *_ = _compute_write_region(
         layer_translate=layer_translate,
         layer_scale=layer_scale,
         plate_translation=plate_offset,
@@ -508,3 +482,123 @@ def test_partial_mode_rejects_timepoint_mismatch(make_napari_viewer, tmp_path):
         "masking_roi_backend": "csv",
     }
     assert saver._do_save_impl(**kwargs) is False
+
+
+# ---------------------------------------------------------------------------
+# _expand_label_dims unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_expand_label_dims_inserts_singleton_z(tmp_path):
+    """2D label (yx) for an image with z=1 gets a z=1 singleton inserted."""
+    image_dir = tmp_path / "img.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir),
+        shape=(1, 1, 64, 64),
+        axes_names=["c", "z", "y", "x"],
+        table_backend="csv",
+    )
+    img = open_ome_zarr_container(str(image_dir)).get_image()
+    label_array = np.zeros((64, 64), dtype=np.uint32)
+    layer_scale = (img.pixel_size.y, img.pixel_size.x)
+    out_arr, out_scale, out_axes = _expand_label_dims(
+        label_array, layer_scale, "yx", img
+    )
+    assert out_arr.shape == (1, 64, 64)
+    assert out_axes == "zyx"
+    assert len(out_scale) == 3
+
+
+def test_expand_label_dims_raises_for_non_singleton(tmp_path):
+    """2D label for an image with z=5 raises ValueError."""
+    image_dir = tmp_path / "img.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir),
+        shape=(1, 5, 64, 64),
+        axes_names=["c", "z", "y", "x"],
+        table_backend="csv",
+    )
+    img = open_ome_zarr_container(str(image_dir)).get_image()
+    label_array = np.zeros((64, 64), dtype=np.uint32)
+    layer_scale = (img.pixel_size.y, img.pixel_size.x)
+    with pytest.raises(ValueError, match="z"):
+        _expand_label_dims(label_array, layer_scale, "yx", img)
+
+
+def test_expand_label_dims_no_op_when_dims_match(tmp_path):
+    """Label ndim already equals non-channel ndim — array returned unchanged."""
+    image_dir = tmp_path / "img.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir),
+        shape=(64, 64),
+        axes_names=["y", "x"],
+        table_backend="csv",
+    )
+    img = open_ome_zarr_container(str(image_dir)).get_image()
+    label_array = np.zeros((64, 64), dtype=np.uint32)
+    layer_scale = (img.pixel_size.y, img.pixel_size.x)
+    out_arr, out_scale, out_axes = _expand_label_dims(
+        label_array, layer_scale, "yx", img
+    )
+    assert out_arr is label_array
+    assert out_axes == "yx"
+
+
+# ---------------------------------------------------------------------------
+# _insert_c_dim unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_insert_c_dim_with_channel_axis(tmp_path):
+    """Shape (y, x) becomes (c, y, x) for an image whose axes include c."""
+    image_dir = tmp_path / "img.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir),
+        shape=(2, 64, 64),
+        axes_names=["c", "y", "x"],
+        table_backend="csv",
+    )
+    img = open_ome_zarr_container(str(image_dir)).get_image()
+    result = _insert_c_dim((64, 64), img)
+    assert result == (2, 64, 64)
+
+
+def test_insert_c_dim_without_channel_axis(synthetic_image_path):
+    """Shape is returned unchanged when image has no c axis."""
+    img = open_ome_zarr_container(synthetic_image_path).get_image()
+    result = _insert_c_dim((64, 64), img)
+    assert result == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# _extract_pixel_sizes unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_extract_pixel_sizes_yx_only(synthetic_image_path):
+    """2D layer: pixelsize_yx set, z_spacing and time_spacing are None."""
+    img = open_ome_zarr_container(synthetic_image_path).get_image()
+    layer_scale = (img.pixel_size.y, img.pixel_size.x)
+    pixelsize_yx, z_spacing, time_spacing = _extract_pixel_sizes(layer_scale, "yx", img)
+    assert pixelsize_yx == (img.pixel_size.y, img.pixel_size.x)
+    assert z_spacing is None
+    assert time_spacing is None
+
+
+def test_extract_pixel_sizes_zyx(tmp_path):
+    """3D layer: all three values populated."""
+    image_dir = tmp_path / "img.zarr"
+    create_synthetic_ome_zarr(
+        store=str(image_dir),
+        shape=(4, 64, 64),
+        axes_names=["z", "y", "x"],
+        table_backend="csv",
+    )
+    img = open_ome_zarr_container(str(image_dir)).get_image()
+    layer_scale = (img.pixel_size.z, img.pixel_size.y, img.pixel_size.x)
+    pixelsize_yx, z_spacing, time_spacing = _extract_pixel_sizes(
+        layer_scale, "zyx", img
+    )
+    assert pixelsize_yx == (img.pixel_size.y, img.pixel_size.x)
+    assert z_spacing == img.pixel_size.z
+    assert time_spacing is None

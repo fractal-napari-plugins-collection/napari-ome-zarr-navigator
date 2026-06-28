@@ -11,12 +11,12 @@ from pathlib import Path
 import numpy as np
 from ngio import create_synthetic_ome_zarr, open_label, open_ome_zarr_container
 
-from napari_ome_zarr_navigator.label_saver import (
+from napari_ome_zarr_navigator._label_save_utils import (
     _WM_EDIT,
     _WM_NEW,
     _WM_RESET,
-    LabelSaverImage,
 )
+from napari_ome_zarr_navigator.label_saver import LabelSaverImage
 
 # ---------------------------------------------------------------------------
 # Helpers
