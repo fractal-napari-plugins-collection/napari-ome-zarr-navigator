@@ -47,8 +47,9 @@ class ConditionTableFilter:
         self._filter_names = None
         self.filter_container.clear()
         self.filter_container.visible = False
-        wells_str, _ = self._plate_mgr.get_plate_wells()
-        self.signals.wells_changed.emit(wells_str)
+        if self._plate_mgr.zarr_plate is not None:
+            wells_str, _ = self._plate_mgr.get_plate_wells()
+            self.signals.wells_changed.emit(wells_str)
 
     def setup_filters(self, df: pd.DataFrame) -> None:
         """Build filter widgets from df and emit the initial well list."""
