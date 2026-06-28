@@ -594,6 +594,7 @@ class ROILoaderImage(ROILoader):
         )
 
     def _launch_roi_annotator(self):
+        import weakref
         from contextlib import suppress
 
         from napari_ome_zarr_navigator.roi_annotator import ROIAnnotatorImage
@@ -613,6 +614,14 @@ class ROILoaderImage(ROILoader):
             tabify=True,
             allowed_areas=["right"],
         )
+        loader_ref = weakref.ref(self)
+
+        def _refresh_on_save():
+            loader = loader_ref()
+            if loader is not None:
+                loader.refresh_roi_tables()
+
+        annotator._post_save_callbacks = [_refresh_on_save]
 
     def update_image_selection(self):
         source = self.zarr_selector.source
