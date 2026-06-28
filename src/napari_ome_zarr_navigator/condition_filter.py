@@ -35,6 +35,10 @@ class ConditionTableFilter:
         self.condition_tables: list[str] = []
 
         self.condition_name_selector = ComboBox()
+        # Choices come from the zarr plate, not from napari layers. Prevent
+        # magicgui's Container.reset_choices walk (triggered on every layer
+        # insertion) from resetting this widget to its empty default.
+        self.condition_name_selector.reset_choices = lambda *_: None
         self.filter_container = Container(layout="vertical", visible=False)
 
     def reset(self) -> None:
@@ -43,8 +47,9 @@ class ConditionTableFilter:
         self._filter_names = None
         self.filter_container.clear()
         self.filter_container.visible = False
-        wells_str, _ = self._plate_mgr.get_plate_wells()
-        self.signals.wells_changed.emit(wells_str)
+        if self._plate_mgr.zarr_plate is not None:
+            wells_str, _ = self._plate_mgr.get_plate_wells()
+            self.signals.wells_changed.emit(wells_str)
 
     def setup_filters(self, df: pd.DataFrame) -> None:
         """Build filter widgets from df and emit the initial well list."""
@@ -69,7 +74,6 @@ class ConditionTableFilter:
         ]
 
         self.filter_container.clear()
-        self.filter_container.extend([self.condition_name_selector])  # type: ignore[arg-type]
         self.filter_container.extend(filter_widgets)  # type: ignore[arg-type]
         self.filter_container.visible = True
 
@@ -93,8 +97,10 @@ class ConditionTableFilter:
         if tables:
             self.condition_tables = tables
             self.condition_name_selector.choices = tables
+            self.condition_name_selector.visible = True
             self.filter_container.visible = True
         else:
+            self.condition_name_selector.visible = False
             self.filter_container.visible = False
             logger.info("No plate condition tables found")
 
@@ -102,6 +108,7 @@ class ConditionTableFilter:
         """Reset the condition-table selector and hide filter UI."""
         self.condition_tables = []
         self.condition_name_selector.choices = []
+        self.condition_name_selector.visible = False
         self.filter_container.visible = False
 
     def load_plate_condition_table(
@@ -123,8 +130,10 @@ class ConditionTableFilter:
         if tables:
             self.condition_tables = tables
             self.condition_name_selector.choices = tables
+            self.condition_name_selector.visible = True
             self.filter_container.visible = True
         else:
+            self.condition_name_selector.visible = False
             self.filter_container.visible = False
             logger.info("No condition tables found in the images")
 
@@ -143,7 +152,7 @@ class ConditionTableFilter:
 
     def _toggle_filter(self, i: int) -> Callable:
         def _toggle() -> None:
-            filter_row = self.filter_container[i + 1]
+            filter_row = self.filter_container[i]
             combo_box, check_box = filter_row[0], filter_row[1]
             combo_box.enabled = check_box.value
 
@@ -157,8 +166,8 @@ class ConditionTableFilter:
         filter_conditions = []
         for i, name in enumerate(self._filter_names):
             combo_box, check_box = (
-                self.filter_container[i + 1][0],
-                self.filter_container[i + 1][1],
+                self.filter_container[i][0],
+                self.filter_container[i][1],
             )
             if check_box.value:
                 any_active = True

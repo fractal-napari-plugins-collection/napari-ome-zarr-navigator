@@ -4,6 +4,7 @@ try:
     from ._version import version as __version__
 except ImportError:
     __version__ = "unknown"
+from .label_saver import LabelSaverImage
 from .plate_browser import (
     PlateBrowser,
 )
@@ -12,7 +13,7 @@ from .roi_loader import (
     ROILoader,
 )
 
-__all__ = ("ROILoader", "PlateBrowser", "ROIAnnotatorImage")
+__all__ = ("ROILoader", "PlateBrowser", "ROIAnnotatorImage", "LabelSaverImage")
 FILE = Path(__file__).resolve()
 _PACKAGE_DIR = FILE.parents[2]
 _MODULE_DIR = FILE.parent
