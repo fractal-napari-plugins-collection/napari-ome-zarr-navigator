@@ -13,7 +13,7 @@ A plugin to interact with OME-Zarr images and plates. Enables integrating OME-Za
     <img src="https://img.youtube.com/vi/aUlbiQJXx_I/maxresdefault.jpg" width="1080" alt="Watch the demo">
   </a>
 </p>
-(click thumbnail above to see the walkthrough video)
+(click the picture above to see the walkthrough video)
 
 
 ## Usage
