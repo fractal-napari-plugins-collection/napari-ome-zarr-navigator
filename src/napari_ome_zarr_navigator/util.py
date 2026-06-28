@@ -124,6 +124,7 @@ class ZarrSelector(Container):
         self._last_file_url = None
         self._last_http_url = None
         self._last_token = None
+        self._last_source = "File"
 
         # Inputs
         self._file_picker = FileEdit(label="Zarr file", mode=file_mode)  # type: ignore[arg-type]
@@ -191,7 +192,9 @@ class ZarrSelector(Container):
             self._file_picker.hide()
             self._http_url.show()
             self._http_token.show()
-        self._emit_source_changed()
+        if value != self._last_source:
+            self._last_source = value
+            self._emit_source_changed()
 
     def _restart_timer(self, *args):
         self._timer.start()

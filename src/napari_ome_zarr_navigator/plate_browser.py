@@ -65,6 +65,7 @@ class PlateBrowser(Container):
             ],
             value="No",
         )
+        self._last_condition_table_source = "No"
         self.roi_loader = None
         self.roi_widget = None
         self.default_zarr_image_subgroup = None
@@ -85,11 +86,14 @@ class PlateBrowser(Container):
             ready_label="Load selected ROI for additional well(s)",
         )
 
+        self._cond_filter.condition_name_selector.visible = False
+
         super().__init__(
             widgets=[
                 self._zarr_selector,
                 self.well,
                 self._condition_table_source,
+                self._cond_filter.condition_name_selector,
                 self._cond_filter.filter_container,
                 Container(
                     widgets=[self.zoom_level, self.select_well],
@@ -178,8 +182,7 @@ class PlateBrowser(Container):
             self.btn_annotate_roi.enabled = False
             self.well.choices = []
             self.well._default_choices = []
-            self._cond_filter.filter_container.clear()
-            self._cond_filter.filter_container.visible = False
+            self._cond_filter.reset()
 
     def get_zarr_url(self):
         # Only auto-populate the URL from layers explicitly loaded by
@@ -330,11 +333,14 @@ class PlateBrowser(Container):
     def go_to_well(self):
         wells = get_row_cols(self.well.value)
 
-        for layer in self.viewer.layers:
-            if isinstance(layer, napari.layers.Shapes) and WELL_LAYER_PATTERN.match(
-                layer.name
-            ):
-                self.viewer.layers.remove(layer)
+        # Snapshot old shapes before adding new ones to avoid mutating the list
+        # during iteration and to prevent naming conflicts with new layers.
+        to_remove = [
+            layer
+            for layer in self.viewer.layers
+            if isinstance(layer, napari.layers.Shapes)
+            and WELL_LAYER_PATTERN.match(layer.name)
+        ]
 
         if len(wells) > 0:
             rec = None
@@ -361,15 +367,23 @@ class PlateBrowser(Container):
             if rec is not None:
                 self.viewer.camera.center = rec.mean(axis=0)
             self.viewer.camera.zoom = self.zoom_level.value
+
+            # Remove old shapes after adding new ones so that the new shapes
+            # layer is active when the removal fires selection-change events.
+            for layer in to_remove:
+                self.viewer.layers.remove(layer)
         else:
             logger.info("Please select at least one well")
 
     def on_condition_table_source_changed(self):
+        source = self._condition_table_source.value
+        if source == self._last_condition_table_source:
+            return
+        self._last_condition_table_source = source
         if not self._plate_mgr.zarr_plate:
             return
         self._cond_filter.clear_condition_tables()
         self._cond_filter.reset()
-        source = self._condition_table_source.value
         if source == "Plate-based condition table":
             self._cond_filter.init_condition_tables(self._plate_mgr.zarr_plate)
         elif source == "Image-based condition table (slow)":
