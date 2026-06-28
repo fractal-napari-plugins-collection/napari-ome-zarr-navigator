@@ -162,7 +162,7 @@ class TestConditionFilter:
         qtbot.waitUntil(lambda: browser._cond_filter.df is not None, timeout=3000)
 
         # Enable the timepoint filter and select "day 0" (only B03)
-        filter_widget = browser._cond_filter.filter_container[1]
+        filter_widget = browser._cond_filter.filter_container[0]
         check_box, combo_box = filter_widget[1], filter_widget[0]
         combo_box.value = "day 0"
         check_box.value = True
@@ -228,10 +228,8 @@ class TestFilterDeactivationRestoresAllWells:
         browser._cond_filter.condition_name_selector.value = "registration_errors"
         qtbot.waitUntil(lambda: browser._cond_filter.df is not None, timeout=3000)
 
-        # Enable the "reason" filter (first condition column after "severity" is
-        # actually index 2 — "reason" is column 0 of df_without_pk).
-        # filter_container: [0]=condition_name_selector, [1]=reason fw, [2]=severity fw
-        reason_fw = browser._cond_filter.filter_container[1]
+        # Enable the "reason" filter — first condition column, so index 0.
+        reason_fw = browser._cond_filter.filter_container[0]
         check_box = reason_fw[1]
         check_box.value = True
         qtbot.waitUntil(lambda: len(browser.well.choices) < 3, timeout=2000)

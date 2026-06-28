@@ -148,9 +148,7 @@ class TestFilterDfNoActiveFilters:
 class TestFilterDfSingleFilter:
     def _enable_filter(self, cf, filter_index, value):
         """Enable the checkbox for filter_index and set the combo to value."""
-        # filter_container[0] is condition_name_selector;
-        # filter widgets start at index 1
-        fw = cf.filter_container[filter_index + 1]
+        fw = cf.filter_container[filter_index]
         combo, check = fw[0], fw[1]
         check.value = True
         combo.value = value
@@ -187,8 +185,8 @@ class TestFilterDfTwoFilters:
         condition_filter.setup_filters(CONDITION_DF)
 
         # drug = drugA AND dose = 1 → B/3 and C/4 both qualify
-        drug_fw = condition_filter.filter_container[1]
-        dose_fw = condition_filter.filter_container[2]
+        drug_fw = condition_filter.filter_container[0]
+        dose_fw = condition_filter.filter_container[1]
         drug_fw[1].value = True
         drug_fw[0].value = "drugA"
         dose_fw[1].value = True
@@ -204,8 +202,8 @@ class TestFilterDfTwoFilters:
         condition_filter.setup_filters(CONDITION_DF)
 
         # drug = drugA AND dose = 2 → no row has both (drugA rows have dose=1)
-        drug_fw = condition_filter.filter_container[1]
-        dose_fw = condition_filter.filter_container[2]
+        drug_fw = condition_filter.filter_container[0]
+        dose_fw = condition_filter.filter_container[1]
         drug_fw[1].value = True
         drug_fw[0].value = "drugA"
         dose_fw[1].value = True
@@ -228,7 +226,7 @@ class TestFilterDfEmptyResult:
         condition_filter.setup_filters(CONDITION_DF)
 
         # Enable drug filter with a value that matches no rows
-        drug_fw = condition_filter.filter_container[1]
+        drug_fw = condition_filter.filter_container[0]
         drug_fw[1].value = True
         # Temporarily add a non-existent value by overriding choices
         drug_fw[0].choices = ["drugA", "drugB", "drugX"]
@@ -262,7 +260,7 @@ class TestFilterDeactivationRestoresAllWells:
         cf.setup_filters(PARTIAL_CONDITION_DF)
 
         # Enable timepoint filter "day 0" → only B03 has day 0
-        timepoint_fw = cf.filter_container[1]
+        timepoint_fw = cf.filter_container[0]
         timepoint_fw[1].value = True
         timepoint_fw[0].value = "day 0"
 
