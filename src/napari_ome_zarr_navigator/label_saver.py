@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import napari
 import napari.layers
@@ -7,11 +8,22 @@ from magicgui.widgets import (
     CheckBox,
     ComboBox,
     Container,
+    FileEdit,
+    Label,
     LineEdit,
     PushButton,
 )
 from napari.qt.threading import thread_worker
-from ngio import open_ome_zarr_container
+from ngio import open_label, open_ome_zarr_container
+from ngio.utils import StoreOrGroup, fractal_fsspec_store
+
+try:
+    from ngio.images._label import derive_label as _ngio_derive_label
+
+    _NGIO_REMOTE_LABEL_AVAILABLE = True
+except ImportError:
+    _ngio_derive_label = None  # type: ignore[assignment]
+    _NGIO_REMOTE_LABEL_AVAILABLE = False
 
 from napari_ome_zarr_navigator.util import ZarrSelector
 
@@ -39,7 +51,8 @@ class LabelSaverImage(Container):
     - Reset existing label: destroy & recreate at full size; fill sub-region
     - Edit existing label: patch-write only the loaded sub-region
 
-    Writing to HTTP/remote stores is not supported.
+    For HTTP/remote stores a local output folder must be chosen; the label is
+    written to ``<folder>/labels/<label_name>/`` as a standalone OME-Zarr label.
     """
 
     def __init__(
@@ -58,8 +71,21 @@ class LabelSaverImage(Container):
         self._pending_save_masking_roi: bool = False
         self._zarr_url: str | None = zarr_url
         self._source: str = source
+        self.is_local: bool = True
+        self._store: StoreOrGroup | None = None
 
         self._zarr_selector = ZarrSelector(label="Image")
+
+        self._remote_save_folder = FileEdit(
+            label="Local output",
+            mode="d",  # type: ignore[arg-type]
+            tooltip=(
+                "The plugin cannot write back to remote OME-Zarr stores. "
+                "Choose a local folder — the label will be saved as "
+                "<folder>/labels/<label_name>."
+            ),
+        )
+        self._remote_save_folder.hide()
 
         self._layer_picker = ComboBox(
             label="Label layer",
@@ -107,8 +133,13 @@ class LabelSaverImage(Container):
         self._btn_save = PushButton(text="Save label to OME-Zarr", enabled=False)
         self._btn_save.native.setStyleSheet("font-weight: bold;")
 
-        super().__init__(
-            widgets=[
+        _widgets = []
+        if zarr_url:
+            self._info_label = Label(value=f"Image: {Path(zarr_url).name}")
+            self._info_label.tooltip = zarr_url
+            _widgets.append(self._info_label)
+        _widgets.extend(
+            [
                 self._zarr_selector,
                 self._layer_picker,
                 self._write_mode,
@@ -117,13 +148,17 @@ class LabelSaverImage(Container):
                 self._save_masking_roi,
                 self._masking_roi_table_name,
                 self._masking_roi_backend,
+                self._remote_save_folder,
                 self._advanced_toggle,
                 self._advanced_container,
                 self._btn_save,
             ]
         )
 
+        super().__init__(widgets=_widgets)
+
         self._zarr_selector.on_change(self._on_url_changed)
+        self._remote_save_folder.changed.connect(self._on_remote_folder_changed)
         self._layer_picker.changed.connect(self._update_axes_inference)
         self._write_mode.changed.connect(self._on_write_mode_changed)
         self._label_name.changed.connect(self._on_label_name_changed)
@@ -169,14 +204,51 @@ class LabelSaverImage(Container):
         url = self._zarr_selector.url
         self._source = self._zarr_selector.source
         self._zarr_url = url if (url and url not in ("", ".")) else None
-        if self._zarr_url and self._source == "File":
-            self._load_container_async(self._zarr_url)
+        self.is_local = self._source == "File"
 
-    def _load_container_async(self, url: str) -> None:
+        if not self._zarr_url:
+            self._store = None
+        elif self.is_local:
+            self._store = self._zarr_url
+            self._remote_save_folder.hide()
+        else:
+            self._store = fractal_fsspec_store(
+                self._zarr_url, fractal_token=self._zarr_selector.token
+            )
+            self._remote_save_folder.show()
+
+        if self._store is not None:
+            self._load_container_async(self._store)
+
+        self._update_save_button_state()
+
+    def _on_remote_folder_changed(self) -> None:
+        if not self.is_local and self._write_mode.value in (_WM_EDIT, _WM_RESET):
+            self._refresh_existing_label_picker_from_folder()
+        self._update_save_button_state()
+
+    def _refresh_existing_label_picker_from_folder(self) -> None:
+        folder = str(self._remote_save_folder.value)
+        if not folder or folder == ".":
+            self._existing_label_picker.choices = []
+            return
+        labels_path = Path(folder) / "labels"
+        if not labels_path.is_dir():
+            self._existing_label_picker.choices = []
+            return
+        candidates = sorted(
+            p.name
+            for p in labels_path.iterdir()
+            if p.is_dir() and (p / ".zattrs").exists()
+        )
+        self._existing_label_picker.choices = candidates
+        self._update_save_button_state()
+
+    def _load_container_async(self, store: StoreOrGroup) -> None:
         @thread_worker
         def _load():
             try:
-                return open_ome_zarr_container(url, mode="r", cache=True)
+                return open_ome_zarr_container(store, mode="r", cache=True)
             except Exception:  # noqa: BLE001
                 return None
 
@@ -220,7 +292,10 @@ class LabelSaverImage(Container):
         self._label_name.visible = not is_existing
         self._existing_label_picker.visible = is_existing
         if is_existing:
-            self._refresh_existing_label_picker()
+            if self.is_local:
+                self._refresh_existing_label_picker()
+            else:
+                self._refresh_existing_label_picker_from_folder()
         self._update_save_button_state()
 
     def _refresh_existing_label_picker(self) -> None:
@@ -258,6 +333,11 @@ class LabelSaverImage(Container):
     # ------------------------------------------------------------------
 
     def _update_save_button_state(self) -> None:
+        if not self.is_local:
+            folder = str(self._remote_save_folder.value)
+            if not folder or folder == ".":
+                self._btn_save.enabled = False
+                return
         if self._write_mode.value in (_WM_EDIT, _WM_RESET):
             self._btn_save.enabled = bool(self._existing_label_picker.choices)
         else:
@@ -308,17 +388,17 @@ class LabelSaverImage(Container):
             logger.warning("No label layer selected.")
             return
 
-        if self._source != "File":
-            logger.warning(
-                "Writing to remote (HTTP) stores is not supported. "
-                "Use a local OME-Zarr file."
-            )
+        store = self._store
+        if store is None:
+            logger.warning("No Zarr store set. Select an OME-Zarr store first.")
             return
 
-        zarr_url = self._zarr_url
-        if not zarr_url:
-            logger.warning("No Zarr URL set. Select an OME-Zarr store first.")
-            return
+        output_folder: str | None = None
+        if not self.is_local:
+            output_folder = str(self._remote_save_folder.value)
+            if not output_folder or output_folder == ".":
+                logger.warning("Choose a local output folder for remote saves.")
+                return
 
         write_mode = self._write_mode.value
         axes_str = self._axes_names.value.strip() or None
@@ -337,7 +417,7 @@ class LabelSaverImage(Container):
         @thread_worker
         def _do():
             return self._do_save_impl(
-                zarr_url=zarr_url,
+                store=store,
                 label_array=label_array,
                 layer_scale=layer_scale,
                 layer_translate=layer_translate,
@@ -347,6 +427,7 @@ class LabelSaverImage(Container):
                 save_masking_roi=save_masking_roi,
                 masking_roi_table_name=masking_roi_table_name,
                 masking_roi_backend=masking_roi_backend,
+                output_folder=output_folder,
             )
 
         worker = _do()  # type: ignore[call-arg]
@@ -569,7 +650,7 @@ class LabelSaverImage(Container):
 
     def _do_save_impl(
         self,
-        zarr_url: str,
+        store: StoreOrGroup,
         label_array: np.ndarray,
         layer_scale: tuple,
         layer_translate: tuple,
@@ -579,9 +660,11 @@ class LabelSaverImage(Container):
         save_masking_roi: bool,
         masking_roi_table_name: str,
         masking_roi_backend: str,
+        output_folder: str | None = None,
     ) -> bool:
+        read_mode = "r" if output_folder else "a"
         try:
-            container = open_ome_zarr_container(zarr_url, mode="a", cache=False)
+            container = open_ome_zarr_container(store, mode=read_mode, cache=False)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to open OME-Zarr container: %s", exc)
             return False
@@ -595,8 +678,10 @@ class LabelSaverImage(Container):
             logger.error("Failed to read reference image: %s", exc)
             return False
 
-        existing_labels = container.list_labels()
-        label_exists = label_name in existing_labels
+        if output_folder:
+            label_exists = (Path(output_folder) / "labels" / label_name).exists()
+        else:
+            label_exists = label_name in container.list_labels()
 
         # Mode precondition checks
         if write_mode == _WM_NEW and label_exists:
@@ -628,6 +713,27 @@ class LabelSaverImage(Container):
         )
 
         try:
+            if output_folder:
+                return self._save_partial_remote(
+                    img=img,
+                    labels_path=Path(output_folder) / "labels",
+                    output_folder=output_folder,
+                    label_array=label_array,
+                    layer_scale=layer_scale,
+                    layer_translate=layer_translate,
+                    axes_str=axes_str,
+                    label_name=label_name,
+                    write_mode=write_mode,
+                    pixelsize_yx=pixelsize_yx,
+                    z_spacing=z_spacing,
+                    time_spacing=time_spacing,
+                    save_masking_roi=save_masking_roi,
+                    masking_roi_table_name=masking_roi_table_name,
+                    masking_roi_backend=masking_roi_backend,
+                    plate_translation=getattr(
+                        self._roi_loader, "translation", (0.0, 0.0)
+                    ),
+                )
             return self._save_partial(
                 container,
                 img,
@@ -755,6 +861,119 @@ class LabelSaverImage(Container):
             overwrite=overwrite,
         )
 
+    def _save_partial_remote(
+        self,
+        img,
+        labels_path: Path,
+        output_folder: str,
+        label_array: np.ndarray,
+        layer_scale: tuple,
+        layer_translate: tuple,
+        axes_str: str,
+        label_name: str,
+        write_mode: str,
+        pixelsize_yx,
+        z_spacing,
+        time_spacing,
+        save_masking_roi: bool,
+        masking_roi_table_name: str,
+        masking_roi_backend: str,
+        plate_translation: tuple = (0.0, 0.0),
+    ) -> bool:
+        if not _NGIO_REMOTE_LABEL_AVAILABLE:
+            logger.error(
+                "Remote label save requires ngio.images._label.derive_label "
+                "(private API). This may have changed in your version of ngio "
+                "— please report this issue."
+            )
+            return False
+
+        ok, msg = self._validate_tz(label_array, axes_str, img)
+        if not ok:
+            logger.warning("Cannot save label: %s", msg)
+            return False
+
+        y0, x0, y1, x1, full_h, full_w, is_partial = self._compute_write_region(
+            layer_translate, layer_scale, plate_translation, label_array, axes_str, img
+        )
+
+        axes_list = list(axes_str)
+        full_shape = list(label_array.shape)
+        if "y" in axes_list:
+            full_shape[axes_list.index("y")] = full_h
+        if "x" in axes_list:
+            full_shape[axes_list.index("x")] = full_w
+        full_shape = tuple(full_shape)
+
+        if write_mode == _WM_EDIT:
+            label_obj = open_label(str(labels_path / label_name))
+            label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
+        else:
+            label_dir = labels_path / label_name
+            labels_path.mkdir(parents=True, exist_ok=True)
+            _ngio_derive_label(  # type: ignore[operator]
+                store=label_dir,
+                name=label_name,
+                ref_image=img,
+                shape=self._insert_c_dim(full_shape, img),
+                pixelsize=pixelsize_yx,
+                z_spacing=z_spacing,
+                time_spacing=time_spacing,
+                overwrite=(write_mode == _WM_RESET),
+            )
+            label_obj = open_label(str(labels_path / label_name))
+            if is_partial:
+                label_obj.set_array(np.zeros(full_shape, dtype=label_array.dtype))
+                label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
+                logger.warning(
+                    "Label '%s' covers only y=[%d:%d], x=[%d:%d] of the full image "
+                    "(%d×%d px). The rest is set to 0.",
+                    label_name,
+                    y0,
+                    y1,
+                    x0,
+                    x1,
+                    full_h,
+                    full_w,
+                )
+            else:
+                label_obj.set_array(label_array)
+
+        label_obj.consolidate()
+
+        if save_masking_roi:
+            self._write_masking_roi_table_remote(
+                label_obj,
+                output_folder,
+                masking_roi_table_name,
+                masking_roi_backend,
+                label_name,
+            )
+        return True
+
+    @staticmethod
+    def _write_masking_roi_table_remote(
+        label_obj,
+        output_folder: str,
+        masking_roi_table_name: str,
+        masking_roi_backend: str,
+        label_name: str,
+    ) -> None:
+        from ngio.tables import open_tables_container
+
+        if not masking_roi_table_name:
+            masking_roi_table_name = f"{label_name}_masking_ROI_table"
+        masking_table = label_obj.build_masking_roi_table()
+        dest = str(Path(output_folder) / "tables")
+        tc = open_tables_container(dest, mode="a")
+        tc.add(
+            masking_roi_table_name,
+            masking_table,
+            backend=masking_roi_backend,
+            overwrite=True,
+        )
+        logger.info("Saved masking ROI table to '%s'.", dest)
+
     def _on_save_complete(self, success: bool) -> None:
         self._btn_save.text = "Save label to OME-Zarr"
         if success:
@@ -762,8 +981,10 @@ class LabelSaverImage(Container):
             if self._write_mode.value == _WM_NEW:
                 self._last_saved_label = saved_name
             logger.info("Label '%s' saved successfully.", saved_name)
-            if self._zarr_url:
-                self._load_container_async(self._zarr_url)
+            if self.is_local and self._store is not None:
+                self._load_container_async(self._store)
+            elif not self.is_local and self._write_mode.value in (_WM_NEW, _WM_RESET):
+                self._refresh_existing_label_picker_from_folder()
             if self._roi_loader is not None:
                 self._roi_loader.refresh_labels()
                 if self._pending_save_masking_roi:

@@ -216,6 +216,7 @@ class PlateBrowser(Container):
                 self._plate_mgr.is_plate,
                 plate_id=self._zarr_selector.url,
                 is_local=is_local,
+                token=self._zarr_selector.token,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
                 widget=self.roi_loader,

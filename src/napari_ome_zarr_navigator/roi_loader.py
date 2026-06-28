@@ -659,6 +659,7 @@ class ROILoaderPlate(ROILoader):
         is_plate: bool,
         plate_id: str = "",
         is_local: bool = True,
+        token: str | None = None,
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
@@ -668,6 +669,7 @@ class ROILoaderPlate(ROILoader):
         self.plate_browser = plate_browser
         self.plate_id = plate_id
         self.is_local = is_local
+        self._token = token
         self.is_plate = is_plate
 
         plate_name = Path(str(plate_id)).name if plate_id else str(plate_store)
@@ -719,6 +721,7 @@ class ROILoaderPlate(ROILoader):
         saver = LabelSaverImage(
             viewer=self._viewer,
             zarr_url=zarr_url,
+            token=self._token,
             source=source,
             roi_loader=self,
         )

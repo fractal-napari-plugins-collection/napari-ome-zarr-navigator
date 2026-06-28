@@ -254,7 +254,7 @@ class ZarrSelector(Container):
         if self.source == "File":
             return str(self._file_picker.value)
         else:
-            return self._http_url.value.strip()
+            return self._http_url.value.strip().rstrip("/")
 
     @property
     def token(self) -> str | None:

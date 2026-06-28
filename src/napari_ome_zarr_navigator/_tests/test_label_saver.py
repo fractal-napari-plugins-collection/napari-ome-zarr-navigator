@@ -54,7 +54,7 @@ def _make_full_label_layer(viewer, image_path, name="seg"):
 def _base_kwargs(image_path, label_layer, write_mode=_WM_NEW, axes_str="yx"):
     """Shared keyword arguments for _do_save_impl."""
     return {
-        "zarr_url": image_path,
+        "store": image_path,
         "label_array": np.asarray(label_layer.data),
         "layer_scale": tuple(label_layer.scale),
         "layer_translate": tuple(float(v) for v in label_layer.translate),
@@ -455,7 +455,7 @@ def test_label_saver_saves_with_masking_roi_table(make_napari_viewer, tmp_path):
     saver = LabelSaverImage(viewer=viewer)
 
     success = saver._do_save_impl(
-        zarr_url=str(image_dir),
+        store=str(image_dir),
         label_array=np.asarray(label_layer.data),
         layer_scale=tuple(label_layer.scale),
         layer_translate=(0.0, 0.0),
@@ -496,7 +496,7 @@ def test_partial_mode_rejects_timepoint_mismatch(make_napari_viewer, tmp_path):
     )
     saver = LabelSaverImage(viewer=viewer)
     kwargs = {
-        "zarr_url": str(image_dir),
+        "store": str(image_dir),
         "label_array": np.asarray(label_layer.data),
         "layer_scale": tuple(label_layer.scale),
         "layer_translate": (0.0, 0.0, 0.0),
