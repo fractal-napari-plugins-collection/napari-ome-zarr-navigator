@@ -119,7 +119,7 @@ pixi run napari
 To launch with the full feature-analysis environment (adds [napari-feature-classifier](https://github.com/fractal-napari-plugins-collection/napari-feature-classifier) and [napari-feature-visualization](https://github.com/fractal-napari-plugins-collection/napari-feature-visualization)):
 
 ```bash
-pixi run napari-fractal
+pixi run --frozen napari-fractal
 ```
 
 ### Via pip
