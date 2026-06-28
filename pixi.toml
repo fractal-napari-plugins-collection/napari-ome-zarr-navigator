@@ -36,3 +36,4 @@ check = { depends-on = ["lint", "typecheck", "test"] }
 [tasks.napari-fractal]
 cmd = "napari"
 default-environment = "napari-fractal"
+env = { NAPARI_ASYNC = "1" }
