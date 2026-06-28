@@ -68,6 +68,34 @@ Select **Masking ROI layer**, choose a label layer that has been loaded into the
 
 The annotator opens images from local files or authenticated HTTPS stores. Saving back to a remote store is not supported (the store is read-only from the plugin's perspective). When a remote image is loaded, a **Save to folder** picker appears so the table can be written to a local directory instead.
 
+
+### Save Labels
+
+The Save Labels widget can be launched from napari's *Plugins* menu (standalone, for single images) or from the ROI Loader ("Save label layer to OME-Zarr"). It saves any napari label layer back to an OME-Zarr image as a label image using [ngio](https://biovisioncenter.github.io/ngio/stable/), with optional [Masking ROI table](https://biovisioncenter.github.io/ngio/stable/table_specs/table_types/masking_roi_table/) generation.
+
+Three write modes cover the main use cases:
+
+- **Save as new label** — creates the label for the first time; fails if the label already exists
+- **Edit existing label** — patches only the pixels in the currently loaded ROI; every pixel outside that region stays unchanged (intended for proof-reading individual ROIs)
+- **Reset existing label** — overwrites the full label with the current layer
+
+#### Creating new labels
+
+Load an image with the ROI Loader, segment or annotate it in napari, then open the Save Labels widget. Select the label layer, choose a name, and click **Save label to OME-Zarr**. The pixel size metadata is taken from the napari label layer. Optionally enable **Save masking ROI table** to derive per-object bounding-box ROIs at the same time.
+
+<!-- SCREENSHOT: save_labels_new — widget with new-label mode, a label layer selected, and the Save button active -->
+
+#### Proof-reading labels ROI by ROI
+
+Load a single ROI using the ROI Loader, edit the label layer in napari, then switch the write mode to **Edit existing label** and save. Only the pixels within the loaded ROI are written back; the rest of the label is untouched. Importantly, neither the ROI loader nor the label saving perform masking. Thus, if you load masking ROI tables, be aware that labels outside the mask will still load and you should not remove them, otherwise they get removed from the final label image.
+
+<!-- SCREENSHOT: save_labels_edit — widget in Edit mode showing the ROI Loader integration and the refresh flow -->
+
+#### Remote OME-Zarr stores
+
+When the source image is on an authenticated remote store (e.g. served by the [Fractal data service](https://github.com/fractal-analytics-platform/fractal-data)), the label cannot be written back to the read-only remote container. In this case a **Local output** folder picker appears and the label is saved there instead.
+
+
 ----------------------------------
 
 
