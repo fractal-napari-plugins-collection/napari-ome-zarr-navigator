@@ -955,14 +955,13 @@ class ROIAnnotatorImage(ROIAnnotator):
             self._update_save_btn_state()
             return
 
-        if self.zarr_selector.source == "File":
-            self.store = url
-            self.is_local = True
-        else:
+        if self.zarr_selector.source == "HTTP":
             self.store = fractal_fsspec_store(
                 url, fractal_token=self.zarr_selector.token
             )
-            self.is_local = False
+        else:
+            self.store = url
+        self.is_local = self.zarr_selector.source == "File"
 
         try:
             container = open_ome_zarr_container(self.store, mode="r", cache=True)
@@ -1004,7 +1003,7 @@ class ROIAnnotatorPlate(ROIAnnotator):
         plate_browser,
         is_plate: bool,
         plate_id: str = "",
-        is_local: bool = True,
+        source: str = "File",
     ):
         self._zarr_picker = ComboBox(label="Image")
         self.plate_store = plate_store
@@ -1024,7 +1023,8 @@ class ROIAnnotatorPlate(ROIAnnotator):
         )
 
         self.layer_base_name = f"{row}{col}_"
-        self.is_local = is_local
+        self.source = source
+        self.is_local = source == "File"
 
         translation, bottom_right = calculate_well_positions(
             plate_store=plate_store, row=row, col=col, is_plate=is_plate
@@ -1073,7 +1073,7 @@ class ROIAnnotatorPlate(ROIAnnotator):
             plate_browser=self.plate_browser,
             is_plate=self.is_plate,
             plate_id=self.plate_id,
-            is_local=self.is_local,
+            source=self.source,
         )
         self.plate_browser.roi_loader = loader
         self.plate_browser.roi_widget = self._viewer.window.add_dock_widget(

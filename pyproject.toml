@@ -37,6 +37,7 @@ dependencies = [
     "wget",
     "ngio>=1.1.2,<1.2",
     "numcodecs!=0.14.0,!=0.14.1,!=0.16", # avoids zarr issue
+    "s3fs>=2024.2.0",
 ]
 
 [project.optional-dependencies]

@@ -44,13 +44,13 @@ class PlateManager:
 
     def open_zarr_plate(self) -> None:
         """Open the plate from the current ZarrSelector URL."""
-        if self._zarr_selector._source_selector.value == "File":
-            self._plate_store = self._zarr_selector.url
-        else:
+        if self._zarr_selector._source_selector.value == "HTTP":
             self._plate_store = fractal_fsspec_store(
                 self._zarr_selector.url,
                 fractal_token=self._zarr_selector.token,
             )
+        else:
+            self._plate_store = self._zarr_selector.url
         try:
             self._zarr_plate = open_ome_zarr_plate(
                 self._plate_store,

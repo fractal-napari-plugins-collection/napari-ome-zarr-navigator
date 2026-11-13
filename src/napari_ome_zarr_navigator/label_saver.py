@@ -208,14 +208,16 @@ class LabelSaverImage(Container):
 
         if not self._zarr_url:
             self._store = None
-        elif self.is_local:
-            self._store = self._zarr_url
-            self._remote_save_folder.hide()
-        else:
+        elif self._source == "HTTP":
             self._store = fractal_fsspec_store(
                 self._zarr_url, fractal_token=self._zarr_selector.token
             )
-            self._remote_save_folder.show()
+        else:
+            self._store = self._zarr_url
+
+        if self._zarr_url:
+            # HTTP and S3 stores are read-only: save to a local folder instead
+            self._remote_save_folder.visible = not self.is_local
 
         if self._store is not None:
             self._load_container_async(self._store)

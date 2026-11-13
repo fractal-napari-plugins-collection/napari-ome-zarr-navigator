@@ -638,10 +638,10 @@ class ROILoaderImage(ROILoader):
             self.reset_widgets()
             return
 
-        if source == "File":
-            store = self.zarr_url
-        else:
+        if source == "HTTP":
             store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
+        else:
+            store = self.zarr_url
 
         worker = self._load_container(store)  # type: ignore[call-arg]
         worker.returned.connect(self._on_image_container_ready)
@@ -671,7 +671,7 @@ class ROILoaderPlate(ROILoader):
         plate_browser,
         is_plate: bool,
         plate_id: str = "",
-        is_local: bool = True,
+        source: str = "File",
         token: str | None = None,
     ):
         self._zarr_picker = ComboBox(label="Image")
@@ -681,7 +681,8 @@ class ROILoaderPlate(ROILoader):
         self.col = col
         self.plate_browser = plate_browser
         self.plate_id = plate_id
-        self.is_local = is_local
+        self.source = source
+        self.is_local = source == "File"
         self._token = token
         self.is_plate = is_plate
 
@@ -730,12 +731,11 @@ class ROILoaderPlate(ROILoader):
                 self._viewer.window.remove_dock_widget(self._label_saver_dock)  # type: ignore[arg-type]
         image_path = self._zarr_picker.value
         zarr_url = f"{self.plate_id}/{self.row}/{self.col}/{image_path}"
-        source = "File" if self.is_local else "HTTP"
         saver = LabelSaverImage(
             viewer=self._viewer,
             zarr_url=zarr_url,
             token=self._token,
-            source=source,
+            source=self.source,
             roi_loader=self,
         )
         self._label_saver_dock = self._viewer.window.add_dock_widget(
@@ -764,7 +764,7 @@ class ROILoaderPlate(ROILoader):
             plate_browser=self.plate_browser,
             is_plate=self.is_plate,
             plate_id=self.plate_id,
-            is_local=self.is_local,
+            source=self.source,
         )
         self.plate_browser.roi_annotator = annotator
         self.plate_browser.roi_annotator_widget = self._viewer.window.add_dock_widget(
