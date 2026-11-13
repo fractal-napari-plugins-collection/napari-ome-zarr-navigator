@@ -384,6 +384,25 @@ def test_roi_annotator_image_file_source(make_napari_viewer, synthetic_image_pat
     assert annotator._save_btn.enabled
 
 
+def test_roi_annotator_image_s3_source(make_napari_viewer, monkeypatch):
+    def _no_network(*args, **kwargs):
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr(
+        "napari_ome_zarr_navigator.roi_annotator.open_ome_zarr_container",
+        _no_network,
+    )
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotatorImage(viewer)
+
+    annotator.zarr_selector._source_selector.value = "S3"
+    annotator.zarr_selector._s3_url.value = "s3://bucket/image.zarr/"
+    annotator._on_selector_changed()
+
+    assert annotator.store == "s3://bucket/image.zarr"
+    assert annotator.is_local is False
+
+
 # ---------------------------------------------------------------------------
 # ROIAnnotatorPlate (plate context)
 # ---------------------------------------------------------------------------
@@ -399,7 +418,7 @@ def test_roi_annotator_plate_init(make_napari_viewer, synthetic_plate_path):
         col="03",
         plate_browser=plate_browser,
         is_plate=True,
-        is_local=True,
+        source="File",
     )
     assert annotator.layer_base_name == "B03_"
     assert annotator.is_local is True
@@ -422,7 +441,7 @@ def test_roi_annotator_plate_second_well_translation(
         col="04",
         plate_browser=plate_browser,
         is_plate=True,
-        is_local=True,
+        source="File",
     )
     # Second well should have non-zero translation
     assert annotator.translation[0] > 0 or annotator.translation[1] > 0

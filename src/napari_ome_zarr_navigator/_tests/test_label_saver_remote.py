@@ -55,6 +55,22 @@ def _base_kwargs(
 # ---------------------------------------------------------------------------
 
 
+def test_s3_source_is_read_only(make_napari_viewer, monkeypatch):
+    """S3 URIs go to ngio unchanged and are saved to a local folder."""
+    monkeypatch.setattr(
+        LabelSaverImage, "_load_container_async", lambda self, store: None
+    )
+    saver = LabelSaverImage(
+        viewer=make_napari_viewer(),
+        zarr_url="s3://bucket/image.zarr",
+        source="S3",
+    )
+
+    assert saver._store == "s3://bucket/image.zarr"
+    assert saver.is_local is False
+    assert not saver._remote_save_folder.native.isHidden()
+
+
 def test_remote_save_new_label(make_napari_viewer, tmp_path):
     """NEW mode: creates output_folder/labels/<name>/ with valid OME-Zarr label."""
     image_path = _make_zarr(tmp_path / "image.zarr")
