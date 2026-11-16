@@ -151,6 +151,8 @@ pip install napari-feature-classifier napari-feature-visualization
 
 Contributions are very welcome. Tests can be run with `pixi run test`; please ensure coverage stays the same before submitting a pull request.
 
+Set up the pre-commit hooks once with `pixi run pre-commit install`. They run ruff from the pixi environment, so they use the same version as `pixi run lint` and `pixi run format`. `pixi run check` runs lint, type checking and tests together.
+
 ## License
 
 Distributed under the terms of the [BSD-3] license,

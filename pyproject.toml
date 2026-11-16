@@ -51,7 +51,7 @@ test = [
     "pyqt6",
     "pooch", # imported by the test fixtures
 ]
-dev = [{ include-group = "test" }, "ruff", "pyright"]
+dev = [{ include-group = "test" }, "ruff", "pyright", "pre-commit"]
 
 [project.urls]
 "Homepage" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator"
