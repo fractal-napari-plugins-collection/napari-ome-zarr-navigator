@@ -39,9 +39,11 @@ def _validate_scale_matches_existing_label(
         if label_ax > 0 and abs(layer_ax - label_ax) / label_ax > _SCALE_REL_TOL:
             return (
                 False,
-                f"Label layer scale ({layer_ax:.6g} along '{ax}') does not "
-                f"match the full pixel size of '{label_name}' ({label_ax:.6g}). "
-                f"To edit this label, work at the resolution of '{label_name}'.",
+                (
+                    f"Label layer scale ({layer_ax:.6g} along '{ax}') does not "
+                    f"match the full pixel size of '{label_name}' ({label_ax:.6g}). "
+                    f"To edit this label, work at the resolution of '{label_name}'."
+                ),
             )
     return True, ""
 
@@ -120,8 +122,10 @@ def _validate_tz(
         if img_z != lbl_z:
             return (
                 False,
-                f"Label has {lbl_z} z-plane(s) but the image has {img_z}. "
-                "The number of z-planes must match.",
+                (
+                    f"Label has {lbl_z} z-plane(s) but the image has {img_z}. "
+                    "The number of z-planes must match."
+                ),
             )
 
     if "t" in img_axes and "t" in axes_list:
@@ -130,8 +134,10 @@ def _validate_tz(
         if img_t != lbl_t:
             return (
                 False,
-                f"Label has {lbl_t} timepoint(s) but the image has {img_t}. "
-                "The number of timepoints must match.",
+                (
+                    f"Label has {lbl_t} timepoint(s) but the image has {img_t}. "
+                    "The number of timepoints must match."
+                ),
             )
 
     return True, ""

@@ -28,26 +28,30 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
-    "numpy",
+    "napari>=0.7",
+    "napari-ome-zarr<0.8", # not imported: used at runtime as the OME-Zarr reader plugin
     "magicgui",
     "qtpy",
-    "scikit-image",
-    "napari-ome-zarr<0.8",
+    "numpy",
+    "pandas",
     "ome-zarr",
-    "requests",
     "ngio>=1.1.2,<1.2",
     "numcodecs!=0.14.0,!=0.14.1,!=0.16", # avoids zarr issue
+    "requests",
 ]
 
-[project.optional-dependencies]
-testing = [
+# Development-only dependencies (PEP 735): not part of the published package
+# metadata. Install with `pip install . --group test` (pip >= 25.1) or
+# `uv sync --group dev`; pixi turns each group into a feature (see [tool.pixi]).
+[dependency-groups]
+test = [
     "pytest",
     "pytest-cov",
     "pytest-qt",
-    "qtpy",
-    "napari",
     "pyqt6",
+    "pooch", # imported by the test fixtures
 ]
+dev = [{ include-group = "test" }, "ruff", "pyright"]
 
 [project.urls]
 "Homepage" = "https://github.com/fractal-napari-plugins-collection/napari-ome-zarr-navigator"
@@ -107,3 +111,46 @@ filterwarnings = [
 [tool.coverage.run]
 source_pkgs = ["napari_ome_zarr_navigator"]
 omit = ["*/_tests/*"]
+
+# ---------------------------------------------------------------------------
+# pixi (https://pixi.sh): conda-forge environments for development and running
+# napari. The [dependency-groups] above are available as pixi features.
+# ---------------------------------------------------------------------------
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64", "win-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.11,<3.15"
+napari = ">=0.7.0"
+pyqt6 = "*"
+pandas = "<3"
+
+[tool.pixi.pypi-dependencies]
+napari-ome-zarr-navigator = { path = ".", editable = true }
+
+[tool.pixi.feature.napari-fractal.dependencies]
+python = "3.13.*"
+
+[tool.pixi.feature.napari-fractal.pypi-dependencies]
+napari-feature-classifier = ">=0.5,<0.6"
+napari-feature-visualization = ">=0.1.0,<0.2"
+ipykernel = "*"
+
+[tool.pixi.environments]
+default = ["dev"]
+napari-fractal = ["dev", "napari-fractal"]
+
+[tool.pixi.tasks]
+test = "pytest -v --color=yes --cov=napari_ome_zarr_navigator --cov-report=xml"
+napari = "napari"
+lint = "ruff check src"
+format = "ruff format src"
+typecheck = "pyright src"
+check = { depends-on = ["lint", "typecheck", "test"] }
+
+[tool.pixi.tasks.napari-fractal]
+cmd = "napari"
+default-environment = "napari-fractal"
+env = { NAPARI_ASYNC = "1" }
