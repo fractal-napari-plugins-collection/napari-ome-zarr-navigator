@@ -23,9 +23,7 @@ from ngio import (
     open_ome_zarr_plate,
 )
 from ngio.common import compute_masking_roi
-from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from ngio.ome_zarr_meta import PixelSize
-from ngio.tables import MaskingRoiTable, RoiTable, open_tables_container
+from ngio.tables import open_tables_container
 from ngio.utils import StoreOrGroup
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
