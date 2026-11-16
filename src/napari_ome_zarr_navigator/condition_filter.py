@@ -124,7 +124,9 @@ class ConditionTableFilter:
     def init_image_condition_tables(self, zarr_plate) -> None:
         """Populate condition-table selector from image-level tables in the plate."""
         try:
-            tables = zarr_plate.list_image_tables(filter_types="condition")
+            tables = zarr_plate.list_image_tables(
+                filter_types="condition", max_workers="auto"
+            )
         except NgioValueError:
             tables = []
         if tables:
@@ -143,7 +145,7 @@ class ConditionTableFilter:
         """Aggregate a condition table from all images via ngio."""
         try:
             raw = zarr_plate.concatenate_image_tables(
-                name=table_name, strict=False
+                name=table_name, strict=False, max_workers="auto"
             ).dataframe
         except NgioValueError:
             return None

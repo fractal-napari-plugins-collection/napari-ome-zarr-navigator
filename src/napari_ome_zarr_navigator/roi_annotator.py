@@ -14,10 +14,16 @@ from magicgui.widgets import (
     PushButton,
     RadioButtons,
 )
-from ngio import open_ome_zarr_container, open_ome_zarr_plate
-from ngio.common import Roi, compute_masking_roi
-from ngio.ome_zarr_meta import PixelSize
-from ngio.tables import MaskingRoiTable, RoiTable, open_tables_container
+from ngio import (
+    MaskingRoiTable,
+    PixelSize,
+    Roi,
+    RoiTable,
+    open_ome_zarr_container,
+    open_ome_zarr_plate,
+)
+from ngio.common import compute_masking_roi
+from ngio.tables import open_tables_container
 from ngio.utils import StoreOrGroup, fractal_fsspec_store
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 

@@ -5,7 +5,6 @@ from collections.abc import Callable
 import napari
 import napari.layers
 import ngio
-import ngio.tables
 import numpy as np
 from napari.layers._source import Source
 from napari.qt.threading import thread_worker
@@ -214,7 +213,7 @@ def fetch_labels_and_features(
 
 
 def find_matching_label_layer_index(
-    feature_table: ngio.tables.FeatureTable,
+    feature_table: ngio.FeatureTable,
     labels: list[str],
 ):
     """

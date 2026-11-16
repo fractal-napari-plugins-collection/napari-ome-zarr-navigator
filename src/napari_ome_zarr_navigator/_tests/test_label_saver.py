@@ -680,3 +680,45 @@ def test_extract_pixel_sizes_zyx(tmp_path):
     assert pixelsize_yx == (img.pixel_size.y, img.pixel_size.x)
     assert z_spacing == img.pixel_size.z
     assert time_spacing is None
+
+
+def test_edit_mode_regional_consolidate_matches_full_rebuild(tmp_path):
+    """EDIT mode rebuilds only the edited pyramid region; every level must match
+    what a full consolidate would produce, including unaligned region edges."""
+    from napari_ome_zarr_navigator._label_save_utils import _apply_write_region
+
+    image_dir = tmp_path / "pyramid.zarr"
+    container = create_synthetic_ome_zarr(
+        store=str(image_dir), shape=(1, 256, 256), table_backend="csv"
+    )
+    assert len(container.level_paths) > 1
+
+    rng = np.random.default_rng(0)
+    regional = container.derive_label("regional")
+    full = container.derive_label("full")
+    initial = rng.integers(0, 20, size=regional.shape, dtype=np.uint32)
+    for lbl in (regional, full):
+        lbl.set_array(initial)
+        lbl.consolidate(mode="auto")
+
+    y0, y1, x0, x1 = 37, 141, 70, 203  # deliberately not chunk/level aligned
+    patch = rng.integers(20, 40, size=(1, y1 - y0, x1 - x0), dtype=np.uint32)
+    _apply_write_region(
+        label_obj=regional,
+        label_array=patch,
+        y0=y0,
+        x0=x0,
+        y1=y1,
+        x1=x1,
+        full_shape=regional.shape,
+        is_partial=True,
+        write_mode=_WM_EDIT,
+    )
+    full.set_array(patch, y=slice(y0, y1), x=slice(x0, x1))
+    full.consolidate(mode="auto")
+
+    reopened = open_ome_zarr_container(str(image_dir), mode="r")
+    for path in reopened.level_paths:
+        got = reopened.get_label("regional", path=path).get_as_numpy()
+        expected = reopened.get_label("full", path=path).get_as_numpy()
+        np.testing.assert_array_equal(got, expected, err_msg=f"level {path}")
