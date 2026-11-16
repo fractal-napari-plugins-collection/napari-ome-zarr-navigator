@@ -272,7 +272,7 @@ def apply_roi_data_to_viewer(
 
     # add labels
     for kw in results["lbl_feats"]["labels"]:
-        layer = viewer.add_labels(**kw)
+        layer = viewer.add_layer(napari.layers.Labels(**kw))
         if zarr_id:
             layer._set_source(
                 Source(path=zarr_id, reader_plugin="napari-ome-zarr-navigator")

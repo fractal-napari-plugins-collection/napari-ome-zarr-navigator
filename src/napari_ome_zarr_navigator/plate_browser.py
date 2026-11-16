@@ -34,6 +34,12 @@ from napari_ome_zarr_navigator.well_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _viewer_camera(viewer):
+    """The viewer's camera; napari >= 0.9 moved it to ``viewer.scene.camera``."""
+    scene = getattr(viewer, "scene", None)
+    return scene.camera if scene is not None else viewer.camera
+
+
 class PlateBrowser(Container):
     def __init__(self, viewer: napari.Viewer):
         self.viewer = viewer
@@ -350,18 +356,21 @@ class PlateBrowser(Container):
                     is_plate=self._plate_mgr.is_plate,
                 )
                 rec = np.array([top_left_corner, bottom_right_corner])
-                self.viewer.add_shapes(
-                    rec,
-                    shape_type="rectangle",
-                    edge_width=5,
-                    edge_color="white",
-                    face_color="transparent",
-                    name=f"{well[0]}{well[1]}",
+                self.viewer.add_layer(
+                    napari.layers.Shapes(
+                        rec,
+                        shape_type="rectangle",
+                        edge_width=5,
+                        edge_color="white",
+                        face_color="transparent",
+                        name=f"{well[0]}{well[1]}",
+                    )
                 )
 
+            camera = _viewer_camera(self.viewer)
             if rec is not None:
-                self.viewer.camera.center = rec.mean(axis=0)
-            self.viewer.camera.zoom = self.zoom_level.value
+                camera.center = rec.mean(axis=0)
+            camera.zoom = self.zoom_level.value
 
             # Remove old shapes after adding new ones so that the new shapes
             # layer is active when the removal fires selection-change events.

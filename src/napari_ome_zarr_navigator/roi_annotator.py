@@ -534,7 +534,7 @@ class ROIAnnotator(Container):
         if scale is not None:
             kw["scale"] = scale
 
-        shapes_layer = self._viewer.add_shapes(**kw)
+        shapes_layer = self._viewer.add_layer(napari.layers.Shapes(**kw))
         self._viewer.layers.selection.active = shapes_layer
         shapes_layer.mode = "add_rectangle"
 
