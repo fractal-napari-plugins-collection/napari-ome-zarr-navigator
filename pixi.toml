@@ -10,6 +10,7 @@ pyqt6 = "*"
 ruff = "*"
 pyright = "*"
 pandas = "<3"
+s3fs = "*"
 
 [pypi-dependencies]
 napari-ome-zarr-navigator = { path = ".", editable = true, extras = ["testing"] }

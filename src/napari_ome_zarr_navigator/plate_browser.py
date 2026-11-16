@@ -12,7 +12,6 @@ from magicgui.widgets import (
     Select,
 )
 from ngio import open_ome_zarr_container
-from ngio.utils import fractal_fsspec_store
 
 from napari_ome_zarr_navigator.condition_filter import ConditionTableFilter
 from napari_ome_zarr_navigator.plate_manager import PlateManager
@@ -25,6 +24,7 @@ from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     ZarrSelector,
     calculate_well_positions,
+    make_store,
 )
 from napari_ome_zarr_navigator.well_utils import (
     WELL_LAYER_PATTERN,
@@ -209,7 +209,6 @@ class PlateBrowser(Container):
                 with suppress(RuntimeError):
                     self.viewer.window.remove_dock_widget(self.roi_widget)  # type: ignore[arg-type]
 
-            is_local = self._zarr_selector._source_selector.value == "File"
             self.roi_loader = ROILoaderPlate(
                 self.viewer,
                 self._plate_mgr.plate_store,
@@ -218,7 +217,7 @@ class PlateBrowser(Container):
                 self,
                 self._plate_mgr.is_plate,
                 plate_id=self._zarr_selector.url,
-                is_local=is_local,
+                source=self._zarr_selector.source,
                 token=self._zarr_selector.token,
             )
             self.roi_widget = self.viewer.window.add_dock_widget(
@@ -242,7 +241,6 @@ class PlateBrowser(Container):
             with suppress(RuntimeError):
                 self.viewer.window.remove_dock_widget(self.roi_annotator_widget)  # type: ignore[arg-type]
 
-        is_local = self._zarr_selector._source_selector.value == "File"
         self.roi_annotator = ROIAnnotatorPlate(
             self.viewer,
             self._plate_mgr.plate_store,
@@ -251,7 +249,7 @@ class PlateBrowser(Container):
             self,
             self._plate_mgr.is_plate,
             plate_id=self._zarr_selector.url,
-            is_local=is_local,
+            source=self._zarr_selector.source,
         )
         self.roi_annotator_widget = self.viewer.window.add_dock_widget(
             widget=self.roi_annotator,
@@ -293,12 +291,9 @@ class PlateBrowser(Container):
             )
             # Create the Zarr object
             zarr_url = f"{str(self._zarr_selector.url)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            if self._zarr_selector._source_selector.value == "File":
-                store = zarr_url
-            else:
-                store = fractal_fsspec_store(
-                    zarr_url, fractal_token=self._zarr_selector.token
-                )
+            store = make_store(
+                self._zarr_selector.source, zarr_url, self._zarr_selector.token
+            )
             ome_zarr_container = open_ome_zarr_container(store)
             assert (
                 self.default_roi_table is not None
