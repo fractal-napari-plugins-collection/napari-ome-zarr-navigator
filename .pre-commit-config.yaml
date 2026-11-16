@@ -1,11 +1,9 @@
-ci:
-  autoupdate_schedule: monthly
-  autofix_commit_msg: "style(pre-commit.ci): auto fixes [...]"
-  autoupdate_commit_msg: "ci(pre-commit.ci): autoupdate"
-
+# Set up once with `pixi run pre-commit install`.
+# ruff runs from the pixi environment (`dev` dependency group), so pre-commit,
+# `pixi run lint` and `pixi run format` all use the version locked in pixi.lock.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-docstring-first
       - id: end-of-file-fixer
@@ -14,18 +12,27 @@ repos:
       - id: check-yaml
 
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.24.1
+    rev: v0.27
     hooks:
       - id: validate-pyproject
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.10
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
 
   - repo: https://github.com/tlambert03/napari-plugin-checks
     rev: v0.3.0
     hooks:
       - id: napari-plugin-checks
+
+  - repo: local
+    hooks:
+      # --frozen: use pixi.lock as is; never re-solve or rewrite it mid-commit.
+      - id: ruff
+        name: ruff
+        entry: pixi run --frozen ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: pixi run --frozen ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
