@@ -2,6 +2,7 @@
 import logging
 import string
 from enum import Enum, auto
+from functools import cache
 from importlib.resources import files
 
 from magicgui.widgets import (
@@ -13,9 +14,11 @@ from magicgui.widgets import (
 )
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
+from ngio.utils import fractal_fsspec_store
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 from qtpy.QtGui import QIcon  # type: ignore[attr-defined]
 from qtpy.QtWidgets import QLineEdit  # type: ignore[attr-defined]
+from zarr.storage import FsspecStore
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -80,6 +83,55 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
     return top_left_corner, bottom_right_corner
 
 
+@cache
+def _has_aws_credentials() -> bool:
+    """Whether botocore finds AWS credentials (env, ~/.aws, instance role).
+
+    Cached: off EC2 the instance-metadata probe can take ~2 s.
+    """
+    import botocore.session
+
+    return botocore.session.Session().get_credentials() is not None
+
+
+def make_store(source: str, url: str, token: str | None = None):
+    """Build the store ngio should open for a ZarrSelector source."""
+    if source == "HTTP":
+        return fractal_fsspec_store(url, fractal_token=token)
+    if source == "S3" and not _has_aws_credentials():
+        # Unsigned requests, so public buckets open without an AWS setup
+        return FsspecStore.from_url(url, storage_options={"anon": True}, read_only=True)
+    return url
+
+
+def _is_s3_error(exc: BaseException | None) -> bool:
+    """s3fs re-raises botocore errors as OSError subclasses, so check the chain."""
+    while exc is not None:
+        if type(exc).__module__.startswith("botocore"):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def access_hint(exc: Exception) -> str:
+    """Hint for S3 access errors, which bypass ngio's own exceptions."""
+    if not _is_s3_error(exc):
+        return ""
+    if _has_aws_credentials():
+        return (
+            " S3 access failed using your AWS credentials. They may be expired or"
+            " invalid (check with `aws sts get-caller-identity`), or lack access"
+            " to this bucket. Credentials restricted to your organisation's"
+            " buckets (e.g. corporate SSO roles) also block public buckets. To"
+            " open a public bucket, restart napari without credentials (unset"
+            " AWS_* variables or set AWS_SHARED_CREDENTIALS_FILE=/dev/null)."
+        )
+    return (
+        " Anonymous S3 access was denied: the bucket is probably private."
+        " Configure AWS credentials and restart napari."
+    )
+
+
 class NapariHandler(logging.Handler):
     def emit(self, record):
         from napari.utils.notifications import show_warning
@@ -114,16 +166,21 @@ class ZarrSelector(Container):
         # Source selector
         self._source_selector = RadioButtons(
             label="Source",
-            choices=["File", "HTTP"],
+            choices=["File", "HTTP", "S3"],
             orientation="horizontal",
             value="File",  # type: ignore[call-arg]
-            tooltip="File: select a local OME-Zarr directory.\nHTTP: enter a remote OME-Zarr URL.",
+            tooltip=(
+                "File: select a local OME-Zarr directory.\n"
+                "HTTP: enter a remote OME-Zarr URL.\n"
+                "S3: enter an s3:// URI (credentials from the AWS environment)."
+            ),
         )
 
         # internal state
         self._last_file_url = None
         self._last_http_url = None
         self._last_token = None
+        self._last_s3_url = None
         self._last_source = "File"
 
         # Inputs
@@ -137,6 +194,8 @@ class ZarrSelector(Container):
             )
         self._http_url = LineEdit(label="Zarr URL")
         self._http_token = LineEdit(label="Token")
+        self._s3_url = LineEdit(label="S3 URI")
+        self._s3_url.tooltip = "e.g. s3://bucket/path/to/data.zarr"
 
         # Mask token + add eye action (always white icons)
         le: QLineEdit = self._http_token.native
@@ -157,11 +216,17 @@ class ZarrSelector(Container):
 
         # Stack & layout
         self._stack = Container(
-            widgets=[self._file_picker, self._http_url, self._http_token],
+            widgets=[
+                self._file_picker,
+                self._http_url,
+                self._http_token,
+                self._s3_url,
+            ],
             labels=False,
         )
         self._http_url.hide()
         self._http_token.hide()
+        self._s3_url.hide()
 
         self._main = Container(
             widgets=[self._source_selector, self._stack],  # type: ignore[arg-type]
@@ -180,18 +245,15 @@ class ZarrSelector(Container):
         self._file_picker.changed.connect(self._emit_changed)
         self._http_url.changed.connect(self._restart_timer)
         self._http_token.changed.connect(self._restart_timer)
+        self._s3_url.changed.connect(self._restart_timer)
 
         self._callbacks = []
 
     def _on_source_changed(self, value):
-        if value == "File":
-            self._file_picker.show()
-            self._http_url.hide()
-            self._http_token.hide()
-        else:
-            self._file_picker.hide()
-            self._http_url.show()
-            self._http_token.show()
+        self._file_picker.visible = value == "File"
+        self._http_url.visible = value == "HTTP"
+        self._http_token.visible = value == "HTTP"
+        self._s3_url.visible = value == "S3"
         if value != self._last_source:
             self._last_source = value
             self._emit_source_changed()
@@ -207,15 +269,21 @@ class ZarrSelector(Container):
         curr_file = str(self._file_picker.value)
         curr_http = self._http_url.value.strip()
         curr_token = self._http_token.value.strip()
+        curr_s3 = self._s3_url.value.strip()
 
-        if (self.source == "File" and curr_file != self._last_file_url) or (
-            self.source == "HTTP"
-            and (curr_http != self._last_http_url or curr_token != self._last_token)
+        if (
+            (self.source == "File" and curr_file != self._last_file_url)
+            or (
+                self.source == "HTTP"
+                and (curr_http != self._last_http_url or curr_token != self._last_token)
+            )
+            or (self.source == "S3" and curr_s3 != self._last_s3_url)
         ):
             # Update state
             self._last_file_url = curr_file
             self._last_http_url = curr_http
             self._last_token = curr_token
+            self._last_s3_url = curr_s3
 
             for cb in self._callbacks:
                 cb()
@@ -223,7 +291,7 @@ class ZarrSelector(Container):
             pass
 
     def _emit_source_changed(self):
-        """Emit callback if the source type changed (File <-> HTTP)."""
+        """Emit callback if the source type changed (File / HTTP / S3)."""
         for cb in self._callbacks:
             cb()
 
@@ -235,6 +303,7 @@ class ZarrSelector(Container):
         self._file_picker.value = zarr_url  # type: ignore[assignment]
         self._http_url.value = zarr_url
         self._http_token.value = token or ""
+        self._s3_url.value = zarr_url
 
     def configure(self, source: str, url: str, token: str | None = None) -> None:
         """Set source, URL and token together.
@@ -247,6 +316,7 @@ class ZarrSelector(Container):
         self._file_picker.value = url  # type: ignore[assignment]
         self._http_url.value = url
         self._http_token.value = token or ""
+        self._s3_url.value = url
 
     @property
     def source(self):
@@ -256,8 +326,9 @@ class ZarrSelector(Container):
     def url(self) -> str:
         if self.source == "File":
             return str(self._file_picker.value)
-        else:
-            return self._http_url.value.strip().rstrip("/")
+        if self.source == "S3":
+            return self._s3_url.value.strip().rstrip("/")
+        return self._http_url.value.strip().rstrip("/")
 
     @property
     def token(self) -> str | None:

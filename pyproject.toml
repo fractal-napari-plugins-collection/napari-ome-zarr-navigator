@@ -40,6 +40,7 @@ dependencies = [
     "ngio>=1.1.2,<1.2",
     "numcodecs!=0.14.0,!=0.14.1,!=0.16", # avoids zarr issue
     "requests",
+    "s3fs>=2024.2.0",
 ]
 
 # Development-only dependencies (PEP 735): not part of the published package
@@ -128,6 +129,7 @@ python = ">=3.11,<3.15"
 napari = ">=0.7.0"
 pyqt6 = "*"
 pandas = "<3"
+s3fs = "*"
 
 [tool.pixi.pypi-dependencies]
 napari-ome-zarr-navigator = { path = ".", editable = true }

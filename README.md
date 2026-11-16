@@ -20,7 +20,7 @@ A plugin to interact with OME-Zarr images and plates. Enables integrating OME-Za
 
 ### Plate Browser
 
-The Plate Browser loads an OME-Zarr plate from the local filesystem or via authenticated HTTPS (e.g. a [Fractal Server](https://fractal-analytics-platform.github.io/) instance). It also auto-detects plates opened via [napari-ome-zarr](https://github.com/ome/napari-ome-zarr). The Plate Browser lets you zoom to a selected well ("Go to well"), which draws a bounding box and centers the camera on that well.
+The Plate Browser loads an OME-Zarr plate from the local filesystem, via authenticated HTTPS (e.g. a [Fractal Server](https://fractal-analytics-platform.github.io/) instance) or from S3 (`s3://` URIs, using the credentials of your AWS environment; when no credentials are found, public buckets are opened anonymously). It also auto-detects plates opened via [napari-ome-zarr](https://github.com/ome/napari-ome-zarr). The Plate Browser lets you zoom to a selected well ("Go to well"), which draws a bounding box and centers the camera on that well.
 
 <img width="1624" alt="plate_browser_go_to_well" src="https://github.com/user-attachments/assets/c83c1daf-a5d2-41b7-8685-564f80eb0122" />
 
@@ -69,7 +69,7 @@ Select **Masking ROI layer**, choose a label layer that has been loaded into the
 
 #### Remote OME-Zarr stores
 
-The annotator opens images from local files or authenticated HTTPS stores. Saving back to a remote store is not supported (the store is read-only from the plugin's perspective). When a remote image is loaded, a **Save to folder** picker appears so the table can be written to a local directory instead.
+The annotator opens images from local files, authenticated HTTPS stores or S3. Saving back to a remote store is not supported (the store is read-only from the plugin's perspective). When a remote image is loaded, a **Save to folder** picker appears so the table can be written to a local directory instead.
 
 
 ### Save Labels
@@ -96,7 +96,17 @@ Load a single ROI using the ROI Loader, edit the label layer in napari, then swi
 
 #### Remote OME-Zarr stores
 
-When the source image is on an authenticated remote store (e.g. served by the [Fractal data service](https://github.com/fractal-analytics-platform/fractal-data)), the label cannot be written back to the read-only remote container. In this case a **Local output** folder picker appears and the label is saved there instead.
+When the source image is on an authenticated remote store (e.g. served by the [Fractal data service](https://github.com/fractal-analytics-platform/fractal-data)) or on S3, the label cannot be written back to the read-only remote container. In this case a **Local output** folder picker appears and the label is saved there instead.
+
+### S3 access
+
+Select the **S3** source and enter an `s3://` URI. Credentials come from the standard AWS chain (environment variables, `~/.aws/credentials` / `~/.aws/config`, instance role); the plugin has no credential fields. When no credentials are found, public buckets are opened anonymously.
+
+Known limitations:
+
+- S3 stores are read-only: ROI tables and labels are saved to a local folder.
+- Credentials are read when S3 is first accessed. If you configure or refresh credentials while napari is running, restart napari to use them.
+- Expired or invalid credentials are still used, so they also block public buckets (no anonymous retry). The same problem could occur if using corporate credentials. Refresh them and restart napari, or start napari without them, e.g. `AWS_SHARED_CREDENTIALS_FILE=/dev/null napari`.
 
 
 ----------------------------------

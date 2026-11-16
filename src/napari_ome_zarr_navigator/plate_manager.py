@@ -5,10 +5,9 @@ from ngio import open_ome_zarr_plate
 from ngio.utils import (
     NgioFileNotFoundError,
     NgioValidationError,
-    fractal_fsspec_store,
 )
 
-from napari_ome_zarr_navigator.util import ZarrSelector
+from napari_ome_zarr_navigator.util import ZarrSelector, access_hint, make_store
 from napari_ome_zarr_navigator.well_utils import well_sort_key
 
 logger = logging.getLogger(__name__)
@@ -44,13 +43,11 @@ class PlateManager:
 
     def open_zarr_plate(self) -> None:
         """Open the plate from the current ZarrSelector URL."""
-        if self._zarr_selector._source_selector.value == "File":
-            self._plate_store = self._zarr_selector.url
-        else:
-            self._plate_store = fractal_fsspec_store(
-                self._zarr_selector.url,
-                fractal_token=self._zarr_selector.token,
-            )
+        self._plate_store = make_store(
+            self._zarr_selector.source,
+            self._zarr_selector.url,
+            self._zarr_selector.token,
+        )
         try:
             self._zarr_plate = open_ome_zarr_plate(
                 self._plate_store,
@@ -67,6 +64,9 @@ class PlateManager:
                 f"check the validation error: \n {e}"
             )
             logger.info(msg)
+        except Exception as e:  # noqa: BLE001
+            self._zarr_plate = None
+            logger.warning(f"Could not open plate: {e}{access_hint(e)}")
 
     def get_plate_wells(self, filters=None) -> tuple[list[str], pd.DataFrame]:
         """Return sorted well names and a row/col DataFrame.
