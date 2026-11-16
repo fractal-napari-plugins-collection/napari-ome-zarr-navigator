@@ -106,7 +106,7 @@ Known limitations:
 
 - S3 stores are read-only: ROI tables and labels are saved to a local folder.
 - Credentials are read when S3 is first accessed. If you configure or refresh credentials while napari is running, restart napari to use them.
-- Expired or invalid credentials are still used, so they also block public buckets (no anonymous retry). Refresh them and restart napari, or start napari without them, e.g. `AWS_SHARED_CREDENTIALS_FILE=/dev/null napari`.
+- Expired or invalid credentials are still used, so they also block public buckets (no anonymous retry). The same problem could occur if using corporate credentials. Refresh them and restart napari, or start napari without them, e.g. `AWS_SHARED_CREDENTIALS_FILE=/dev/null napari`.
 
 
 ----------------------------------

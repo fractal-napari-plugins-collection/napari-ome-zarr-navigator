@@ -120,10 +120,11 @@ def access_hint(exc: Exception) -> str:
     if _has_aws_credentials():
         return (
             " S3 access failed using your AWS credentials. They may be expired or"
-            " invalid (check with `aws sts get-caller-identity`). Invalid"
-            " credentials also block public buckets: refresh them, or start napari"
-            " without them (unset AWS_* variables or set"
-            " AWS_SHARED_CREDENTIALS_FILE=/dev/null)."
+            " invalid (check with `aws sts get-caller-identity`), or lack access"
+            " to this bucket. Credentials restricted to your organisation's"
+            " buckets (e.g. corporate SSO roles) also block public buckets. To"
+            " open a public bucket, restart napari without credentials (unset"
+            " AWS_* variables or set AWS_SHARED_CREDENTIALS_FILE=/dev/null)."
         )
     return (
         " Anonymous S3 access was denied: the bucket is probably private."
