@@ -29,7 +29,9 @@ classifiers = [
 ]
 dependencies = [
     "napari>=0.7",
-    "napari-ome-zarr<0.8", # not imported: used at runtime as the OME-Zarr reader plugin
+    # Not imported: used at runtime as the OME-Zarr reader plugin. 0.8.0/0.8.1
+    # shipped without the napari plugin entry point (fixed in 0.8.2).
+    "napari-ome-zarr!=0.8.0,!=0.8.1",
     "magicgui",
     "qtpy",
     "numpy",
