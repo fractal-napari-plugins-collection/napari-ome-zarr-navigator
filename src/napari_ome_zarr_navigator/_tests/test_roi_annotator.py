@@ -650,3 +650,37 @@ def test_calculate_and_save_masking_roi_table(make_napari_viewer, synthetic_imag
 
     container2 = open_ome_zarr_container(synthetic_image_path, mode="r")
     assert "test_masking_table" in container2.list_tables()
+
+
+def test_masking_roi_refuses_shifted_label_layer(
+    make_napari_viewer, synthetic_image_path
+):
+    """Masking ROIs are computed from the label layer's translate, which is only
+    valid at the regular ROI position."""
+    from napari_ome_zarr_navigator.roi_loading_utils import POSITION_METADATA_KEY
+
+    viewer = make_napari_viewer()
+    annotator = ROIAnnotator(viewer)
+    annotator.store = synthetic_image_path
+    annotator.is_local = True
+
+    lbl = open_ome_zarr_container(synthetic_image_path, mode="r").get_label("nuclei")
+    ps = lbl.pixel_size
+    viewer.add_labels(
+        np.array(lbl.get_array()),
+        name="nuclei",
+        scale=(ps.z, ps.y, ps.x),
+        metadata={
+            POSITION_METADATA_KEY: {"translation": {"z": 0.0, "y": 2.0, "x": 1.0}}
+        },
+    )
+    annotator._mode_selector.value = _MODE_MASK
+    annotator._label_layer_picker.choices = ["nuclei"]
+    annotator._label_layer_picker.value = "nuclei"
+
+    annotator.calculate_masking_roi_table()
+
+    shapes = [
+        layer for layer in viewer.layers if isinstance(layer, napari.layers.Shapes)
+    ]
+    assert all(len(layer.data) == 0 for layer in shapes)

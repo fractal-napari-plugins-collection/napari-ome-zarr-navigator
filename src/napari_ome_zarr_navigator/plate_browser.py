@@ -11,7 +11,7 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from ngio import open_ome_zarr_container
+from ngio import NgioError, open_ome_zarr_container
 
 from napari_ome_zarr_navigator.condition_filter import ConditionTableFilter
 from napari_ome_zarr_navigator.plate_manager import PlateManager
@@ -19,7 +19,10 @@ from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
     remove_existing_label_layers,
 )
-from napari_ome_zarr_navigator.roi_loading_utils import orchestrate_load_roi
+from napari_ome_zarr_navigator.roi_loading_utils import (
+    orchestrate_load_roi,
+    roi_table_info,
+)
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     ZarrSelector,
@@ -32,6 +35,12 @@ from napari_ome_zarr_navigator.well_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _viewer_camera(viewer):
+    """The viewer's camera; napari >= 0.9 moved it to ``viewer.scene.camera``."""
+    scene = getattr(viewer, "scene", None)
+    return scene.camera if scene is not None else viewer.camera
 
 
 class PlateBrowser(Container):
@@ -76,6 +85,9 @@ class PlateBrowser(Container):
         self.default_labels = None
         self.default_features = None
         self.remove_old_labels = False
+        self.default_original_position = False
+        self.default_add_translation = False
+        self.default_masked = False
         self.default_image_loading_mode = "Multi-resolution (lazy)"
         self.default_label_loading_mode = "Fixed resolution"
         self.default_label_level = "0"
@@ -323,7 +335,34 @@ class PlateBrowser(Container):
                     self.default_label_loading_mode == "Multi-resolution (lazy)"
                 ),
                 label_level=self.default_label_level,
+                **self._default_roi_kwargs(ome_zarr_container),
             )
+
+    def _default_roi_kwargs(self, ome_zarr_container) -> dict:
+        """ROI loading options for one well.
+
+        Each well has its own ROI table, so the minimum original position is
+        taken from that well's table, as in the ROI Loader. Masking needs no
+        lookup here: the loaders only mask ROIs of masking ROI tables.
+        """
+        kwargs: dict = {"masked": True} if self.default_masked else {}
+        if not (self.default_original_position or self.default_add_translation):
+            return kwargs
+        try:
+            table = ome_zarr_container.get_generic_roi_table(self.default_roi_table)
+        except NgioError as exc:
+            logger.warning(
+                "Could not read ROI table '%s' for the position options: %s",
+                self.default_roi_table,
+                exc,
+            )
+            return kwargs
+        info = roi_table_info(table.rois())
+        kwargs["original_origin"] = (
+            info.original_origin if self.default_original_position else None
+        )
+        kwargs["add_translation"] = self.default_add_translation
+        return kwargs
 
     def go_to_well(self):
         wells = get_row_cols(self.well.value)
@@ -350,18 +389,21 @@ class PlateBrowser(Container):
                     is_plate=self._plate_mgr.is_plate,
                 )
                 rec = np.array([top_left_corner, bottom_right_corner])
-                self.viewer.add_shapes(
-                    rec,
-                    shape_type="rectangle",
-                    edge_width=5,
-                    edge_color="white",
-                    face_color="transparent",
-                    name=f"{well[0]}{well[1]}",
+                self.viewer.add_layer(
+                    napari.layers.Shapes(
+                        rec,
+                        shape_type="rectangle",
+                        edge_width=5,
+                        edge_color="white",
+                        face_color="transparent",
+                        name=f"{well[0]}{well[1]}",
+                    )
                 )
 
+            camera = _viewer_camera(self.viewer)
             if rec is not None:
-                self.viewer.camera.center = rec.mean(axis=0)
-            self.viewer.camera.zoom = self.zoom_level.value
+                camera.center = rec.mean(axis=0)
+            camera.zoom = self.zoom_level.value
 
             # Remove old shapes after adding new ones so that the new shapes
             # layer is active when the removal fires selection-change events.
@@ -397,6 +439,9 @@ class PlateBrowser(Container):
         image_loading_mode="Multi-resolution (lazy)",
         label_loading_mode="Fixed resolution",
         label_level="0",
+        original_position=False,
+        add_translation=False,
+        masked=False,
     ):
         self.default_zarr_image_subgroup = zarr_image_subgroup
         self.default_roi_table = roi_table
@@ -409,4 +454,7 @@ class PlateBrowser(Container):
         self.default_image_loading_mode = image_loading_mode
         self.default_label_loading_mode = label_loading_mode
         self.default_label_level = label_level
+        self.default_original_position = original_position
+        self.default_add_translation = add_translation
+        self.default_masked = masked
         self.btn_load_default_roi.enabled = True
