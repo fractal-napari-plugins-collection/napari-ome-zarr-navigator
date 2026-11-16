@@ -4,19 +4,18 @@ import hashlib
 import logging
 import re
 import shutil
-import urllib.error
 import urllib.parse
 from pathlib import Path
 from typing import Union
 
 import requests
-import wget
 from napari.types import LayerDataTuple
 from ome_zarr.io import parse_url
 from ome_zarr.reader import Reader
 
 from napari_ome_zarr_navigator import _TEST_DATA_DIR
 
+logger = logging.getLogger(__name__)
 logging.getLogger("ome_zarr").setLevel(logging.WARN)
 
 
@@ -41,35 +40,63 @@ def download_from_zenodo(
     assert m is not None, f"Could not parse Zenodo DOI: {doi}"
     record_id = m.group(1)
     url = "https://zenodo.org/api/records/" + record_id
-    js = requests.get(url).json()
-    doi = js["metadata"]["doi"]
-    print("Title: " + js["metadata"]["title"])
-    print("Publication date: " + js["metadata"]["publication_date"])
-    print("DOI: " + js["metadata"]["doi"])
-    print(
-        "Total file size: {:.1f} MB".format(sum(f["size"] / 10**6 for f in js["files"]))
-    )
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    js = response.json()
     doi_path = Path(directory)
     try:
         doi_path.mkdir(exist_ok=overwrite, parents=True)
     except FileExistsError:
-        print(f"{doi_path} exists. Don't overwrite.")
+        logger.warning(
+            "%s already exists, skipping download (pass overwrite=True to replace).",
+            doi_path,
+        )
         return
+    total_mb = sum(f["size"] for f in js["files"]) / 10**6
+    # Single message: the package logger turns every INFO record into a napari
+    # notification, so per-field messages would show up as several popups.
+    logger.info(
+        "Downloading Zenodo record '%s' (DOI %s, published %s, %.1f MB) to %s",
+        js["metadata"]["title"],
+        js["metadata"]["doi"],
+        js["metadata"]["publication_date"],
+        total_mb,
+        doi_path,
+    )
     for file in js["files"]:
-        file_path = Path(doi_path).joinpath(file["key"])
+        file_path = doi_path / file["key"]
         algorithm, checksum = file["checksum"].split(":")
-        try:
-            link = urllib.parse.unquote(file["links"]["self"])
-            wget.download(f"{link}?access_token={access_token}", str(directory))
-            check_passed, returned_checksum = verify_checksum(
-                file_path, algorithm, checksum
+        link = urllib.parse.unquote(file["links"]["self"])
+        _download_file(link, file_path, access_token=access_token)
+        check_passed, returned_checksum = verify_checksum(
+            file_path, algorithm, checksum
+        )
+        if check_passed:
+            logger.debug("Checksum OK for %s (%s)", file_path.name, checksum)
+        else:
+            logger.warning(
+                "Checksum mismatch for %s: expected %s, got %s. "
+                "The download may be corrupted.",
+                file_path.name,
+                checksum,
+                returned_checksum,
             )
-            if check_passed:
-                print(f"\nChecksum is correct. ({checksum})")
-            else:
-                print(f"\nChecksum is incorrect! ({checksum} got: {returned_checksum})")
-        except urllib.error.HTTPError:
-            pass
+
+
+def _download_file(
+    url: str, destination: Path, access_token: str | None = None
+) -> None:
+    """Stream ``url`` into ``destination``.
+
+    Zenodo file links end in ``/content``, so the target filename must come from
+    the record's file key (``destination``), not from the URL.
+    """
+    params = {"access_token": access_token} if access_token else None
+    with requests.get(url, params=params, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(destination, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                f.write(chunk)
 
 
 def verify_checksum(filename: Union[str, Path], algorithm, original_checksum):
