@@ -6,13 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
+    MASKED_METADATA_KEY,
     POSITION_METADATA_KEY,
-    RoiPositionInfo,
+    RoiTableInfo,
     _compute_scale,
     _roi_translate,
     find_matching_label_layer_index,
+    is_masked_layer,
     is_shifted_layer,
-    roi_position_info,
+    roi_table_info,
 )
 
 
@@ -135,13 +137,13 @@ FOV_2 = _roi(
 ORIGIN = {"y": -1000.0, "x": -2000.0}
 
 
-class TestRoiPositionInfo:
+class TestRoiTableInfo:
     def test_original_origin_and_translation(self):
-        info = roi_position_info([FOV_1, FOV_2])
-        assert info == RoiPositionInfo(original_origin=ORIGIN, has_translation=True)
+        info = roi_table_info([FOV_1, FOV_2])
+        assert info == RoiTableInfo(original_origin=ORIGIN, has_translation=True)
 
     def test_table_without_position_columns(self):
-        assert roi_position_info([_roi("well", 0.0, 0.0)]) == RoiPositionInfo()
+        assert roi_table_info([_roi("well", 0.0, 0.0)]) == RoiTableInfo()
 
     def test_minimum_ignores_nan_and_missing_rows(self):
         nan_roi = _roi(
@@ -151,7 +153,7 @@ class TestRoiPositionInfo:
             y_micrometer_original=float("nan"),
             x_micrometer_original=-9999.0,
         )
-        info = roi_position_info([FOV_2, nan_roi, _roi("plain", 0.0, 0.0)])
+        info = roi_table_info([FOV_2, nan_roi, _roi("plain", 0.0, 0.0)])
         assert info.original_origin == {"y": -1000.0, "x": -1950.0}
 
     def test_z_origin_only_from_rois_with_z(self):
@@ -163,7 +165,7 @@ class TestRoiPositionInfo:
             x_micrometer_original=0.0,
             z_micrometer_original=-5.0,
         )
-        info = roi_position_info([FOV_1, with_z])
+        info = roi_table_info([FOV_1, with_z])
         assert info.original_origin == {"y": -1000.0, "x": -2000.0, "z": -5.0}
 
 
@@ -243,10 +245,20 @@ def test_original_position_of_real_fractal_fov_table(zenodo_zarr):
     zarr_url = Path(zenodo_zarr[1]) / "B" / "03" / "0"
     container = ngio.open_ome_zarr_container(str(zarr_url))
     rois = container.get_generic_roi_table("FOV_ROI_table").rois()
-    info = roi_position_info(rois)
+    info = roi_table_info(rois)
     assert info.original_origin is not None
     assert not info.has_translation
     fov_2 = next(r for r in rois if r.name == "FOV_2")
     translate, tag = _roi_translate(fov_2, (0.0, 0.0), origin=info.original_origin)
     assert translate == pytest.approx((0.0, 416.0))
     assert tag is not None and "original" in tag
+
+
+def test_roi_table_info_flags_masking_tables():
+    assert roi_table_info([FOV_1], is_masking_table=True).is_masking_table
+    assert not roi_table_info([FOV_1]).is_masking_table
+
+
+def test_is_masked_layer():
+    assert is_masked_layer(MagicMock(metadata={MASKED_METADATA_KEY: {"label": 6}}))
+    assert not is_masked_layer(MagicMock(metadata={POSITION_METADATA_KEY: {}}))

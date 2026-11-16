@@ -20,10 +20,10 @@ from ngio.utils import (
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
     ROILoaderSignals,
-    RoiPositionInfo,
+    RoiTableInfo,
     orchestrate_load_roi,
     remove_existing_label_layers,
-    roi_position_info,
+    roi_table_info,
 )
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
@@ -61,6 +61,17 @@ _TOOLTIP_TRANSLATION = (
 )
 _TOOLTIP_NO_ORIGINAL = "The selected ROI table has no *_micrometer_original columns."
 _TOOLTIP_NO_TRANSLATION = "The selected ROI table has no translation_x/y/z columns."
+_TOOLTIP_MASKED = (
+    "Keep only the selected object in images and labels: pixels outside the "
+    "object's label become 0, and features only cover that object. Layers "
+    "loaded this way can't be saved with the Label Saver."
+)
+_TOOLTIP_NO_MASKED = "Only available for masking ROI tables."
+
+
+def _is_active(box: CheckBox) -> bool:
+    """A ROI loading option counts only when it's checked and enabled."""
+    return bool(box.enabled and box.value)
 
 
 class ROILoader(Container):
@@ -110,8 +121,8 @@ class ROILoader(Container):
         self._remove_old_labels_box = CheckBox(
             value=False, text="Remove existing labels"
         )
-        # ROI position options; enabled per ROI table in _on_rois_fetched
-        self._position_info = RoiPositionInfo()
+        # ROI loading options; enabled per ROI table in _on_rois_fetched
+        self._table_info = RoiTableInfo()
         self._original_position_box = CheckBox(
             value=False, text="Load ROI at original position", enabled=False
         )
@@ -120,6 +131,10 @@ class ROILoader(Container):
             value=False, text="Add registration translation", enabled=False
         )
         self._add_translation_box.tooltip = _TOOLTIP_NO_TRANSLATION
+        self._masked_box = CheckBox(
+            value=False, text="Mask ROI by its label", enabled=False
+        )
+        self._masked_box.tooltip = _TOOLTIP_NO_MASKED
         self._advanced_toggle = PushButton(text="▶ Advanced settings")
         self._advanced_container = Container(
             widgets=[
@@ -130,6 +145,7 @@ class ROILoader(Container):
                 self._remove_old_labels_box,
                 self._original_position_box,
                 self._add_translation_box,
+                self._masked_box,
             ],
         )
         self._advanced_container.visible = False
@@ -318,39 +334,42 @@ class ROILoader(Container):
     @thread_worker
     def _fetch_rois(
         self, table_name: str
-    ) -> tuple[str, list[str | None], RoiPositionInfo]:
-        """Worker returning the ROI names and position columns of a table."""
+    ) -> tuple[str, list[str | None], RoiTableInfo]:
+        """Worker returning the ROI names and supported loading options of a table."""
         if self.ome_zarr_container is not None:
             ngio_table = self.ome_zarr_container.get_generic_roi_table(name=table_name)
             rois = ngio_table.rois()
-            return table_name, [r.name for r in rois], roi_position_info(rois)
+            info = roi_table_info(
+                rois, is_masking_table=isinstance(ngio_table, ngio.MaskingRoiTable)
+            )
+            return table_name, [r.name for r in rois], info
         else:
-            return table_name, [""], RoiPositionInfo()
+            return table_name, [""], RoiTableInfo()
 
     def _on_rois_fetched(
-        self, result: tuple[str, list[str | None], RoiPositionInfo]
+        self, result: tuple[str, list[str | None], RoiTableInfo]
     ) -> None:
-        table_name, roi_list, position_info = result
+        table_name, roi_list, info = result
         # Workers can finish out of order (e.g. the init fetch for the first
         # table after the user already picked another one). A stale result would
-        # show the wrong table's ROIs and position info, so drop it.
+        # show the wrong table's ROIs and loading options, so drop it.
         if table_name != self._roi_table_picker.value:
             return
-        self._set_position_info(position_info)
+        self._set_table_info(info)
         self._apply_roi_choices_update(roi_list)
 
     def _show_no_rois(self) -> None:
-        """ROI choices and position options for 'no ROI table' / no image."""
-        self._set_position_info(RoiPositionInfo())
+        """ROI choices and loading options for 'no ROI table' / no image."""
+        self._set_table_info(RoiTableInfo())
         self._apply_roi_choices_update([_NO_ROI_NAME])
 
-    def _set_position_info(self, info: RoiPositionInfo) -> None:
-        """Enable the ROI position options the selected table supports.
+    def _set_table_info(self, info: RoiTableInfo) -> None:
+        """Enable the ROI loading options the selected table supports.
 
         The boxes keep their checked state while disabled, so switching back to
-        a table with the columns restores the user's choice.
+        a table that supports them restores the user's choice.
         """
-        self._position_info = info
+        self._table_info = info
         has_original = info.original_origin is not None
         self._original_position_box.enabled = has_original
         self._original_position_box.tooltip = (
@@ -359,6 +378,10 @@ class ROILoader(Container):
         self._add_translation_box.enabled = info.has_translation
         self._add_translation_box.tooltip = (
             _TOOLTIP_TRANSLATION if info.has_translation else _TOOLTIP_NO_TRANSLATION
+        )
+        self._masked_box.enabled = info.is_masking_table
+        self._masked_box.tooltip = (
+            _TOOLTIP_MASKED if info.is_masking_table else _TOOLTIP_NO_MASKED
         )
 
     def update_roi_selection(self):
@@ -597,12 +620,11 @@ class ROILoader(Container):
             multiscale_labels=multiscale_labels,
             label_level=label_level,  # type: ignore[arg-type]
             whole_image=whole_image,
-            original_origin=self._position_info.original_origin
-            if self._original_position_box.enabled and self._original_position_box.value
+            original_origin=self._table_info.original_origin
+            if _is_active(self._original_position_box)
             else None,
-            add_translation=bool(
-                self._add_translation_box.enabled and self._add_translation_box.value
-            ),
+            add_translation=_is_active(self._add_translation_box),
+            masked=_is_active(self._masked_box),
         )
 
 
@@ -893,11 +915,7 @@ class ROILoaderPlate(ROILoader):
             image_loading_mode=self._image_loading_mode.value,
             label_loading_mode=self._label_loading_mode.value,
             label_level=label_level,
-            original_position=bool(
-                self._original_position_box.enabled
-                and self._original_position_box.value
-            ),
-            add_translation=bool(
-                self._add_translation_box.enabled and self._add_translation_box.value
-            ),
+            original_position=_is_active(self._original_position_box),
+            add_translation=_is_active(self._add_translation_box),
+            masked=_is_active(self._masked_box),
         )

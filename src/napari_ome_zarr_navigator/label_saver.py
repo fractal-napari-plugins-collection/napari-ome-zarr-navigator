@@ -32,7 +32,9 @@ from napari_ome_zarr_navigator._label_save_utils import (
     _validate_tz,
 )
 from napari_ome_zarr_navigator.roi_loading_utils import (
+    MASKED_LAYER_MESSAGE,
     SHIFTED_LAYER_MESSAGE,
+    is_masked_layer,
     is_shifted_layer,
 )
 from napari_ome_zarr_navigator.util import ZarrSelector, access_hint, make_store
@@ -397,6 +399,9 @@ class LabelSaverImage(Container):
         # regular ROI position.
         if is_shifted_layer(layer):
             logger.warning(SHIFTED_LAYER_MESSAGE, layer.name, "save it")
+            return
+        if is_masked_layer(layer):
+            logger.warning(MASKED_LAYER_MESSAGE, layer.name)
             return
 
         store = self._store

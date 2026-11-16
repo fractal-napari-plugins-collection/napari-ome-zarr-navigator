@@ -21,7 +21,7 @@ from napari_ome_zarr_navigator.roi_loader import (
 )
 from napari_ome_zarr_navigator.roi_loading_utils import (
     orchestrate_load_roi,
-    roi_position_info,
+    roi_table_info,
 )
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
@@ -87,6 +87,7 @@ class PlateBrowser(Container):
         self.remove_old_labels = False
         self.default_original_position = False
         self.default_add_translation = False
+        self.default_masked = False
         self.default_image_loading_mode = "Multi-resolution (lazy)"
         self.default_label_loading_mode = "Fixed resolution"
         self.default_label_level = "0"
@@ -334,17 +335,19 @@ class PlateBrowser(Container):
                     self.default_label_loading_mode == "Multi-resolution (lazy)"
                 ),
                 label_level=self.default_label_level,
-                **self._default_position_kwargs(ome_zarr_container),
+                **self._default_roi_kwargs(ome_zarr_container),
             )
 
-    def _default_position_kwargs(self, ome_zarr_container) -> dict:
-        """ROI position options for one well.
+    def _default_roi_kwargs(self, ome_zarr_container) -> dict:
+        """ROI loading options for one well.
 
         Each well has its own ROI table, so the minimum original position is
-        taken from that well's table, as in the ROI Loader.
+        taken from that well's table, as in the ROI Loader. Masking needs no
+        lookup here: the loaders only mask ROIs of masking ROI tables.
         """
+        kwargs: dict = {"masked": True} if self.default_masked else {}
         if not (self.default_original_position or self.default_add_translation):
-            return {}
+            return kwargs
         try:
             table = ome_zarr_container.get_generic_roi_table(self.default_roi_table)
         except NgioError as exc:
@@ -353,14 +356,13 @@ class PlateBrowser(Container):
                 self.default_roi_table,
                 exc,
             )
-            return {}
-        info = roi_position_info(table.rois())
-        return {
-            "original_origin": (
-                info.original_origin if self.default_original_position else None
-            ),
-            "add_translation": self.default_add_translation,
-        }
+            return kwargs
+        info = roi_table_info(table.rois())
+        kwargs["original_origin"] = (
+            info.original_origin if self.default_original_position else None
+        )
+        kwargs["add_translation"] = self.default_add_translation
+        return kwargs
 
     def go_to_well(self):
         wells = get_row_cols(self.well.value)
@@ -439,6 +441,7 @@ class PlateBrowser(Container):
         label_level="0",
         original_position=False,
         add_translation=False,
+        masked=False,
     ):
         self.default_zarr_image_subgroup = zarr_image_subgroup
         self.default_roi_table = roi_table
@@ -453,4 +456,5 @@ class PlateBrowser(Container):
         self.default_label_level = label_level
         self.default_original_position = original_position
         self.default_add_translation = add_translation
+        self.default_masked = masked
         self.btn_load_default_roi.enabled = True

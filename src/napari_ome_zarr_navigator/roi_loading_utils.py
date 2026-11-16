@@ -39,7 +39,7 @@ def _compute_scale(ngio_img, ndim: int) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# ROI positioning: original position and registration translation
+# ROI loading options: original position, registration translation, masking
 # ---------------------------------------------------------------------------
 
 # layer.metadata key marking layers that were not loaded at their regular
@@ -47,25 +47,67 @@ def _compute_scale(ngio_img, ndim: int) -> tuple:
 # derive the on-disk position from the layer's translate.
 POSITION_METADATA_KEY = "navigator_position"
 
+# layer.metadata key marking layers loaded masked by a masking ROI table (only
+# the selected object kept). The Label Saver refuses them: writing them back
+# would erase or drop the neighbouring objects in the ROI's bounding box.
+MASKED_METADATA_KEY = "navigator_masked"
+
 
 @dataclass(frozen=True)
-class RoiPositionInfo:
-    """Optional position columns a ROI table provides (computed once per table).
+class RoiTableInfo:
+    """Which ROI loading options a ROI table supports (computed once per table).
 
     Attributes:
         original_origin: Per-axis minimum of the ``*_micrometer_original``
             columns over the table (keys "y", "x" and, if present, "z"), or
             None when the table has no original positions.
         has_translation: Whether any ROI has ``translation_x/y/z`` columns.
+        is_masking_table: Whether the table is a masking ROI table, so its
+            ROIs can be loaded masked by their label.
     """
 
     original_origin: dict[str, float] | None = None
     has_translation: bool = False
+    is_masking_table: bool = False
 
 
 def is_shifted_layer(layer) -> bool:
     """Whether a layer was loaded at its original position or with translation."""
     return POSITION_METADATA_KEY in (getattr(layer, "metadata", None) or {})
+
+
+def is_masked_layer(layer) -> bool:
+    """Whether a layer was loaded masked by a masking ROI table."""
+    return MASKED_METADATA_KEY in (getattr(layer, "metadata", None) or {})
+
+
+MASKED_LAYER_MESSAGE = (
+    "Label layer '%s' was loaded masked by a masking ROI table, so it only "
+    "contains the selected object; saving it would erase or drop neighbouring "
+    "objects. Reload the ROI without 'Mask ROI by its label' to save it."
+)
+
+
+def _mask_label_id(ngio_table, roi, masked: bool) -> int | None:
+    """Object id to mask the ROI by, or None when not masking.
+
+    Masking only applies to ROIs of a masking ROI table that carry a label.
+    """
+    if not masked or roi is None or not isinstance(ngio_table, ngio.MaskingRoiTable):
+        return None
+    return roi.label
+
+
+def _layer_metadata(
+    position_tag: dict | None, mask_label: int | None, roi_table: str
+) -> dict:
+    """layer.metadata entries recording how a ROI layer was loaded."""
+    metadata: dict = {}
+    if position_tag is not None:
+        metadata[POSITION_METADATA_KEY] = position_tag
+    if mask_label is not None:
+        metadata[MASKED_METADATA_KEY] = {"roi_table": roi_table, "label": mask_label}
+    return metadata
 
 
 SHIFTED_LAYER_MESSAGE = (
@@ -112,8 +154,8 @@ def _translation_coords(roi) -> dict[str, float] | None:
     return {ax: v if v is not None else 0.0 for ax, v in values.items()}
 
 
-def roi_position_info(rois: Iterable) -> RoiPositionInfo:
-    """Summarise which optional position columns a ROI table's ROIs carry."""
+def roi_table_info(rois: Iterable, *, is_masking_table: bool = False) -> RoiTableInfo:
+    """Summarise which ROI loading options a ROI table's ROIs support."""
     rois = list(rois)
     originals = [c for roi in rois if (c := _original_coords(roi)) is not None]
     origin = None
@@ -123,7 +165,11 @@ def roi_position_info(rois: Iterable) -> RoiPositionInfo:
         if z_values:
             origin["z"] = min(z_values)
     has_translation = any(_translation_coords(roi) is not None for roi in rois)
-    return RoiPositionInfo(original_origin=origin, has_translation=has_translation)
+    return RoiTableInfo(
+        original_origin=origin,
+        has_translation=has_translation,
+        is_masking_table=is_masking_table,
+    )
 
 
 def _roi_translate(
@@ -209,6 +255,7 @@ def fetch_single_image(
     whole_image: bool = False,
     original_origin: dict[str, float] | None = None,
     add_translation: bool = False,
+    masked: bool = False,
 ):
     """Load exactly one channel and return kwargs for viewer.add_image.
 
@@ -216,13 +263,16 @@ def fetch_single_image(
     When multiscale=True, returns a list of dask arrays (finest→coarsest) for
     napari's multiscale rendering. When False, returns a numpy array at level.
     ``original_origin`` / ``add_translation`` select the ROI position, see
-    ``_roi_translate``.
+    ``_roi_translate``. ``masked`` keeps only the ROI's object for ROIs of a
+    masking ROI table (pixels outside it become 0).
     """
     curr_roi = None
+    ngio_table = None
     if not whole_image:
         # TODO: Refactor ROI table loading to happen before the parallelized fetch
         ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
         curr_roi = ngio_table.get(roi_name)
+    mask_label = _mask_label_id(ngio_table, curr_roi, masked)
 
     if multiscale:
         level_paths = ome_zarr_container.level_paths  # ngio order: finest→coarsest
@@ -231,6 +281,14 @@ def fetch_single_image(
             ngio_img = ome_zarr_container.get_image(path=lv)
             if curr_roi is None:
                 arr = ngio_img.get_as_dask(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
+            elif mask_label is not None:
+                arr = (
+                    ome_zarr_container.get_masked_image(
+                        masking_table_name=roi_table, path=lv
+                    )
+                    .get_roi_masked_as_dask(mask_label, channel_selection=channel)
+                    .squeeze()  # type: ignore[attr-defined]
+                )
             else:
                 arr = ngio_img.get_roi_as_dask(
                     roi=curr_roi, channel_selection=channel
@@ -245,9 +303,18 @@ def fetch_single_image(
         if curr_roi is None:
             arr = ngio_img.get_as_numpy(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
         else:
-            arr = ngio_img.get_roi_as_numpy(
-                roi=curr_roi, channel_selection=channel
-            ).squeeze()  # type: ignore[attr-defined]
+            if mask_label is not None:
+                arr = (
+                    ome_zarr_container.get_masked_image(
+                        masking_table_name=roi_table, path=level
+                    )
+                    .get_roi_masked_as_numpy(mask_label, channel_selection=channel)
+                    .squeeze()
+                )
+            else:
+                arr = ngio_img.get_roi_as_numpy(
+                    roi=curr_roi, channel_selection=channel
+                ).squeeze()  # type: ignore[attr-defined]
             if not np.any(arr):
                 return None
         data = arr
@@ -284,8 +351,9 @@ def fetch_single_image(
         "name": f"{layer_base_name}{channel}",
         "translate": roi_translation,
     }
-    if position_tag is not None:
-        layer_kwargs["metadata"] = {POSITION_METADATA_KEY: position_tag}
+    metadata = _layer_metadata(position_tag, mask_label, roi_table)
+    if metadata:
+        layer_kwargs["metadata"] = metadata
     return layer_kwargs
 
 
@@ -305,6 +373,7 @@ def fetch_labels_and_features(
     whole_image: bool = False,
     original_origin: dict[str, float] | None = None,
     add_translation: bool = False,
+    masked: bool = False,
 ):
     """
     Load all label masks + feature tables for one ROI (or the whole image).
@@ -315,12 +384,15 @@ def fetch_labels_and_features(
     When multiscale_labels=True, label data is a list of dask arrays
     (finest→coarsest). When False, loads a numpy array at label_level.
     ``original_origin`` / ``add_translation`` select the ROI position, see
-    ``_roi_translate``.
+    ``_roi_translate``. ``masked`` keeps only the ROI's object for ROIs of a
+    masking ROI table; features then only cover that object.
     """
     curr_roi = None
+    ngio_table = None
     if not whole_image:
         ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
         curr_roi = ngio_table.get(roi_name)
+    mask_label = _mask_label_id(ngio_table, curr_roi, masked)
 
     result = {"labels": [], "features": []}
 
@@ -334,6 +406,14 @@ def fetch_labels_and_features(
                 ngio_lbl = ome_zarr_container.get_label(name=lbl, path=lv)
                 if curr_roi is None:
                     arr = ngio_lbl.get_as_dask().squeeze()  # type: ignore[attr-defined]
+                elif mask_label is not None:
+                    arr = (
+                        ome_zarr_container.get_masked_label(
+                            lbl, masking_table_name=roi_table, path=lv
+                        )
+                        .get_roi_masked_as_dask(mask_label)
+                        .squeeze()  # type: ignore[attr-defined]
+                    )
                 else:
                     arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
                 data.append(arr)
@@ -343,6 +423,14 @@ def fetch_labels_and_features(
             ngio_lbl = ome_zarr_container.get_label(name=lbl, path=label_level)
             if curr_roi is None:
                 arr = ngio_lbl.get_as_numpy().squeeze()  # type: ignore[attr-defined]
+            elif mask_label is not None:
+                arr = (
+                    ome_zarr_container.get_masked_label(
+                        lbl, masking_table_name=roi_table, path=label_level
+                    )
+                    .get_roi_masked_as_numpy(mask_label)
+                    .squeeze()
+                )
             else:
                 arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
             data = arr
@@ -362,8 +450,9 @@ def fetch_labels_and_features(
             "name": f"{layer_base_name}{lbl}",
             "translate": roi_translation,
         }
-        if position_tag is not None:
-            label_kwargs["metadata"] = {POSITION_METADATA_KEY: position_tag}
+        metadata = _layer_metadata(position_tag, mask_label, roi_table)
+        if metadata:
+            label_kwargs["metadata"] = metadata
         result["labels"].append(label_kwargs)
 
     # 2) load features
@@ -485,6 +574,7 @@ def orchestrate_load_roi(
     whole_image: bool = False,
     original_origin: dict[str, float] | None = None,
     add_translation: bool = False,
+    masked: bool = False,
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -521,9 +611,11 @@ def orchestrate_load_roi(
         whole_image: When True, skip ROI cropping and load the full image/labels.
         original_origin: When given, place the ROI at its original position
             (``*_micrometer_original`` columns) relative to this per-axis table
-            minimum, instead of its regular position. See ``roi_position_info``.
+            minimum, instead of its regular position. See ``roi_table_info``.
         add_translation: When True, shift the ROI by its registration
             translation (``translation_x/y/z`` columns).
+        masked: When True and ``roi_table`` is a masking ROI table, keep only
+            the ROI's object in images and labels (everything else is 0).
 
     """
     # 1) disable & show "Loading"
@@ -560,6 +652,19 @@ def orchestrate_load_roi(
                     roi_name,
                     roi_table,
                 )
+        if masked and not whole_image:
+            layer_kwargs = [kw for kw in results["images"] if kw]
+            layer_kwargs += results["lbl_feats"]["labels"]
+            if any(
+                MASKED_METADATA_KEY not in (kw.get("metadata") or {})
+                for kw in layer_kwargs
+            ):
+                logger.warning(
+                    "ROI '%s' in '%s' could not be masked (not a masking ROI "
+                    "table, or the ROI has no label); loaded unmasked.",
+                    roi_name,
+                    roi_table,
+                )
         apply_roi_data_to_viewer(
             viewer, results, channels, base_name, blending_int, set_state_fn, zarr_id
         )
@@ -589,6 +694,7 @@ def orchestrate_load_roi(
             whole_image=whole_image,
             original_origin=original_origin,
             add_translation=add_translation,
+            masked=masked,
         )
         w.returned.connect(
             lambda img_kw: (results["images"].append(img_kw), worker_done())
@@ -612,6 +718,7 @@ def orchestrate_load_roi(
         whole_image=whole_image,
         original_origin=original_origin,
         add_translation=add_translation,
+        masked=masked,
     )
     w2.returned.connect(
         lambda lf: (results.__setitem__("lbl_feats", lf), worker_done())

@@ -742,3 +742,23 @@ def test_label_saver_refuses_shifted_layer(make_napari_viewer, synthetic_image_p
     assert saver._btn_save.text == button_text  # no save was started
     container = open_ome_zarr_container(synthetic_image_path, mode="r")
     assert "shifted_label" not in container.list_labels()
+
+
+def test_label_saver_refuses_masked_layer(make_napari_viewer, synthetic_image_path):
+    """A masked label layer only holds one object; saving it would erase or
+    drop its neighbours, so it is refused in every write mode."""
+    from napari_ome_zarr_navigator.roi_loading_utils import MASKED_METADATA_KEY
+
+    viewer = make_napari_viewer()
+    saver = LabelSaverImage(viewer=viewer, zarr_url=synthetic_image_path, source="File")
+    layer = _make_full_label_layer(viewer, synthetic_image_path, name="masked")
+    layer.metadata[MASKED_METADATA_KEY] = {"roi_table": "masking", "label": 1}
+    saver._layer_picker.value = "masked"
+    saver._label_name.value = "masked_label"
+    button_text = saver._btn_save.text
+
+    saver._save()
+
+    assert saver._btn_save.text == button_text  # no save was started
+    container = open_ome_zarr_container(synthetic_image_path, mode="r")
+    assert "masked_label" not in container.list_labels()

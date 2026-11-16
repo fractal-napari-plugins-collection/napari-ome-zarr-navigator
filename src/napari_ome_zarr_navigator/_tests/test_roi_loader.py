@@ -513,8 +513,9 @@ def test_additional_wells_use_each_wells_own_table(tmp_path):
         default_roi_table="FOV_ROI_table",
         default_original_position=True,
         default_add_translation=True,
+        default_masked=False,
     )
-    kwargs = PlateBrowser._default_position_kwargs(defaults, container)  # type: ignore[arg-type]
+    kwargs = PlateBrowser._default_roi_kwargs(defaults, container)  # type: ignore[arg-type]
     assert kwargs == {
         "original_origin": {"y": -9.0, "x": 30.0},
         "add_translation": True,
@@ -522,4 +523,78 @@ def test_additional_wells_use_each_wells_own_table(tmp_path):
 
     defaults.default_original_position = False
     defaults.default_add_translation = False
-    assert PlateBrowser._default_position_kwargs(defaults, container) == {}  # type: ignore[arg-type]
+    assert PlateBrowser._default_roi_kwargs(defaults, container) == {}  # type: ignore[arg-type]
+
+    defaults.default_masked = True
+    assert PlateBrowser._default_roi_kwargs(defaults, container) == {"masked": True}  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Masked loading from masking ROI tables
+# ---------------------------------------------------------------------------
+
+_MASKING_TABLE = "masking_roi_table_nuclei"
+
+
+def test_masked_option_only_for_masking_tables(make_napari_viewer, zenodo_zarr, qtbot):
+    zarr_url = Path(zenodo_zarr[1]) / "B" / "03" / "0"
+    roi_loader = _init_roi_loader_image(make_napari_viewer(), zarr_url, qtbot)
+
+    _select_roi_table(roi_loader, qtbot, "FOV_ROI_table", "FOV_2")
+    assert not roi_loader._masked_box.enabled
+    _select_roi_table(roi_loader, qtbot, _MASKING_TABLE, "6")
+    assert roi_loader._masked_box.enabled
+
+
+@pytest.mark.parametrize("image_mode", ["Fixed resolution", "Multi-resolution (lazy)"])
+def test_masked_loading_keeps_only_the_object(
+    make_napari_viewer, zenodo_zarr, qtbot, image_mode
+):
+    """Object 6's bounding box also contains objects 20 and 35; masking keeps
+    only object 6 in images, labels and features, at the same position."""
+    from napari_ome_zarr_navigator.roi_loading_utils import MASKED_METADATA_KEY
+
+    zarr_url = Path(zenodo_zarr[1]) / "B" / "03" / "0"
+    viewer = make_napari_viewer()
+    roi_loader = _init_roi_loader_image(viewer, zarr_url, qtbot)
+    _select_roi_table(roi_loader, qtbot, _MASKING_TABLE, "6")
+
+    def load(masked):
+        viewer.layers.clear()
+        roi_loader._image_loading_mode.value = image_mode
+        roi_loader._roi_picker.value = "6"
+        roi_loader._channel_picker.value = ["DAPI"]
+        roi_loader._label_picker.value = ["nuclei"]
+        roi_loader._feature_picker.value = ["measurements"]
+        roi_loader._masked_box.value = masked
+        with qtbot.waitSignal(
+            roi_loader.image_changed_event.load_finished, timeout=10000
+        ):
+            roi_loader.run()
+        image = next(
+            lyr for lyr in viewer.layers if isinstance(lyr, napari.layers.Image)
+        )
+        label = next(
+            lyr for lyr in viewer.layers if isinstance(lyr, napari.layers.Labels)
+        )
+        image_data = np.asarray(image.data[0] if image.multiscale else image.data)
+        return image, image_data, label
+
+    plain_image, plain_pixels, plain_label = load(masked=False)
+    assert set(np.unique(np.asarray(plain_label.data))) == {0, 6, 20, 35}
+    assert MASKED_METADATA_KEY not in plain_image.metadata
+
+    image, pixels, label = load(masked=True)
+    assert set(np.unique(np.asarray(label.data))) == {0, 6}
+    assert set(label.features["label"]) == {6}
+    assert pixels.shape == plain_pixels.shape
+    kept = pixels != 0
+    assert 0 < kept.mean() < 1
+    np.testing.assert_array_equal(pixels[kept], plain_pixels[kept])
+    np.testing.assert_allclose(image.translate, plain_image.translate)
+    np.testing.assert_allclose(label.translate, plain_label.translate)
+    for layer in (image, label):
+        assert layer.metadata[MASKED_METADATA_KEY] == {
+            "roi_table": _MASKING_TABLE,
+            "label": 6,
+        }
