@@ -2,6 +2,7 @@
 import logging
 import string
 from enum import Enum, auto
+from functools import cache
 from importlib.resources import files
 
 from magicgui.widgets import (
@@ -13,9 +14,11 @@ from magicgui.widgets import (
 )
 from napari.utils.notifications import show_info
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
+from ngio.utils import fractal_fsspec_store
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 from qtpy.QtGui import QIcon  # type: ignore[attr-defined]
 from qtpy.QtWidgets import QLineEdit  # type: ignore[attr-defined]
+from zarr.storage import FsspecStore
 
 
 def alpha_to_numeric(alpha: str) -> int:
@@ -78,6 +81,54 @@ def calculate_well_positions(plate_store, row, col, is_plate=True):
         top_left_corner[1] + scale[1] * shape[1],
     ]
     return top_left_corner, bottom_right_corner
+
+
+@cache
+def _has_aws_credentials() -> bool:
+    """Whether botocore finds AWS credentials (env, ~/.aws, instance role).
+
+    Cached: off EC2 the instance-metadata probe can take ~2 s.
+    """
+    import botocore.session
+
+    return botocore.session.Session().get_credentials() is not None
+
+
+def make_store(source: str, url: str, token: str | None = None):
+    """Build the store ngio should open for a ZarrSelector source."""
+    if source == "HTTP":
+        return fractal_fsspec_store(url, fractal_token=token)
+    if source == "S3" and not _has_aws_credentials():
+        # Unsigned requests, so public buckets open without an AWS setup
+        return FsspecStore.from_url(url, storage_options={"anon": True}, read_only=True)
+    return url
+
+
+def _is_s3_error(exc: BaseException | None) -> bool:
+    """s3fs re-raises botocore errors as OSError subclasses, so check the chain."""
+    while exc is not None:
+        if type(exc).__module__.startswith("botocore"):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def access_hint(exc: Exception) -> str:
+    """Hint for S3 access errors, which bypass ngio's own exceptions."""
+    if not _is_s3_error(exc):
+        return ""
+    if _has_aws_credentials():
+        return (
+            " S3 access failed using your AWS credentials. They may be expired or"
+            " invalid (check with `aws sts get-caller-identity`). Invalid"
+            " credentials also block public buckets: refresh them, or start napari"
+            " without them (unset AWS_* variables or set"
+            " AWS_SHARED_CREDENTIALS_FILE=/dev/null)."
+        )
+    return (
+        " Anonymous S3 access was denied: the bucket is probably private."
+        " Configure AWS credentials and restart napari."
+    )
 
 
 class NapariHandler(logging.Handler):

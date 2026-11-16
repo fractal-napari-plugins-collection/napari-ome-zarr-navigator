@@ -12,7 +12,6 @@ from magicgui.widgets import (
     Select,
 )
 from ngio import open_ome_zarr_container
-from ngio.utils import fractal_fsspec_store
 
 from napari_ome_zarr_navigator.condition_filter import ConditionTableFilter
 from napari_ome_zarr_navigator.plate_manager import PlateManager
@@ -25,6 +24,7 @@ from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     ZarrSelector,
     calculate_well_positions,
+    make_store,
 )
 from napari_ome_zarr_navigator.well_utils import (
     WELL_LAYER_PATTERN,
@@ -291,12 +291,9 @@ class PlateBrowser(Container):
             )
             # Create the Zarr object
             zarr_url = f"{str(self._zarr_selector.url)}/{well[0]}/{well[1]}/{self.default_zarr_image_subgroup}"
-            if self._zarr_selector._source_selector.value == "HTTP":
-                store = fractal_fsspec_store(
-                    zarr_url, fractal_token=self._zarr_selector.token
-                )
-            else:
-                store = zarr_url
+            store = make_store(
+                self._zarr_selector.source, zarr_url, self._zarr_selector.token
+            )
             ome_zarr_container = open_ome_zarr_container(store)
             assert (
                 self.default_roi_table is not None

@@ -16,7 +16,7 @@ from magicgui.widgets import (
 from napari.qt.threading import thread_worker
 from ngio import open_label, open_ome_zarr_container
 from ngio.images import derive_label
-from ngio.utils import StoreOrGroup, fractal_fsspec_store
+from ngio.utils import StoreOrGroup
 
 from napari_ome_zarr_navigator._label_save_utils import (
     _WM_EDIT,
@@ -31,7 +31,7 @@ from napari_ome_zarr_navigator._label_save_utils import (
     _validate_scale_matches_existing_label,
     _validate_tz,
 )
-from napari_ome_zarr_navigator.util import ZarrSelector
+from napari_ome_zarr_navigator.util import ZarrSelector, access_hint, make_store
 
 logger = logging.getLogger(__name__)
 
@@ -208,12 +208,10 @@ class LabelSaverImage(Container):
 
         if not self._zarr_url:
             self._store = None
-        elif self._source == "HTTP":
-            self._store = fractal_fsspec_store(
-                self._zarr_url, fractal_token=self._zarr_selector.token
-            )
         else:
-            self._store = self._zarr_url
+            self._store = make_store(
+                self._source, self._zarr_url, self._zarr_selector.token
+            )
 
         if self._zarr_url:
             # HTTP and S3 stores are read-only: save to a local folder instead
@@ -251,7 +249,8 @@ class LabelSaverImage(Container):
         def _load():
             try:
                 return open_ome_zarr_container(store, mode="r", cache=True)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not open image: {exc}{access_hint(exc)}")
                 return None
 
         w = _load()  # type: ignore[call-arg]

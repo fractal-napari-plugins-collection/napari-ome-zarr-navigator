@@ -14,10 +14,8 @@ from magicgui.widgets import (
 from napari.qt.threading import thread_worker
 from ngio import open_ome_zarr_container, open_ome_zarr_plate
 from ngio.utils import (
-    NgioFileNotFoundError,
     NgioValidationError,
     StoreOrGroup,
-    fractal_fsspec_store,
 )
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
@@ -29,7 +27,9 @@ from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     LoaderState,
     ZarrSelector,
+    access_hint,
     calculate_well_positions,
+    make_store,
 )
 
 logger = logging.getLogger(__name__)
@@ -459,7 +459,7 @@ class ROILoader(Container):
         """Threaded open_ome_zarr_container."""
         try:
             return open_ome_zarr_container(store, mode="r", cache=True)
-        except NgioFileNotFoundError as exc:
+        except Exception as exc:  # noqa: BLE001
             self._on_image_container_error(exc)
             return None
 
@@ -467,7 +467,7 @@ class ROILoader(Container):
         self.ome_zarr_container = container
 
     def _on_image_container_error(self, exc: Exception):
-        logger.warning(f"Error while loading image: {exc}")
+        logger.warning(f"Error while loading image: {exc}{access_hint(exc)}")
         self.ome_zarr_container = None
         self.reset_widgets()
 
@@ -638,10 +638,7 @@ class ROILoaderImage(ROILoader):
             self.reset_widgets()
             return
 
-        if source == "HTTP":
-            store = fractal_fsspec_store(self.zarr_url, fractal_token=token)
-        else:
-            store = self.zarr_url
+        store = make_store(source, self.zarr_url, token)
 
         worker = self._load_container(store)  # type: ignore[call-arg]
         worker.returned.connect(self._on_image_container_ready)

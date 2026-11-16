@@ -23,13 +23,16 @@ from ngio import (
     open_ome_zarr_plate,
 )
 from ngio.common import compute_masking_roi
-from ngio.tables import open_tables_container
-from ngio.utils import StoreOrGroup, fractal_fsspec_store
+from ngio import open_ome_zarr_container, open_ome_zarr_plate
+from ngio.ome_zarr_meta import PixelSize
+from ngio.tables import MaskingRoiTable, RoiTable, open_tables_container
+from ngio.utils import StoreOrGroup
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
 from napari_ome_zarr_navigator.util import (
     ZarrSelector,
     calculate_well_positions,
+    make_store,
 )
 
 logger = logging.getLogger(__name__)
@@ -955,12 +958,9 @@ class ROIAnnotatorImage(ROIAnnotator):
             self._update_save_btn_state()
             return
 
-        if self.zarr_selector.source == "HTTP":
-            self.store = fractal_fsspec_store(
-                url, fractal_token=self.zarr_selector.token
-            )
-        else:
-            self.store = url
+        self.store = make_store(
+            self.zarr_selector.source, url, self.zarr_selector.token
+        )
         self.is_local = self.zarr_selector.source == "File"
 
         try:
