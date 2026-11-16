@@ -228,6 +228,9 @@ class ROILoader(Container):
 
         @thread_worker
         def _get():
+            # cache=True containers hold metadata until refreshed (ngio>=1.1),
+            # so tables written through another handle are otherwise invisible.
+            self.ome_zarr_container.refresh()  # type: ignore[union-attr]
             return self.get_roi_tables()
 
         w = _get()  # type: ignore[call-arg]
@@ -239,6 +242,7 @@ class ROILoader(Container):
         if self._ome_zarr_container is None:
             return
         try:
+            self._ome_zarr_container.refresh()
             labels = self._ome_zarr_container.list_labels()
         except Exception:  # noqa: BLE001
             labels = []

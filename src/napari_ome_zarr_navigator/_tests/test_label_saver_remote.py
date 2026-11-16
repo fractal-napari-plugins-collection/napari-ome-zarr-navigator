@@ -1,9 +1,8 @@
 """
 Tests for LabelSaverImage remote-save path.
 
-These tests exercise the private ngio.images._label.derive_label API so that
-a ngio version bump that removes or renames that symbol fails here immediately,
-giving early notice to update the remote-save implementation.
+The remote path writes the label with the standalone ``ngio.images.derive_label``
+into a separate output folder instead of going through an OmeZarrContainer.
 """
 
 from pathlib import Path
@@ -228,22 +227,3 @@ def test_remote_save_with_masking_roi(make_napari_viewer, tmp_path):
     tables_path = Path(output_folder) / "tables"
     assert tables_path.is_dir(), "tables/ folder not created"
     assert any(tables_path.iterdir()), "tables/ folder is empty"
-
-
-def test_remote_save_unavailable_guard(make_napari_viewer, tmp_path, monkeypatch):
-    """When the private API guard is False, save fails with an informative error."""
-    import napari_ome_zarr_navigator.label_saver as ls_module
-
-    monkeypatch.setattr(ls_module, "_NGIO_REMOTE_LABEL_AVAILABLE", False)
-
-    image_path = _make_zarr(tmp_path / "image.zarr")
-    output_folder = str(tmp_path / "output")
-
-    viewer = make_napari_viewer()
-    layer = viewer.add_labels(np.zeros((32, 32), dtype=np.uint32), name="seg")
-    saver = LabelSaverImage(viewer=viewer)
-
-    result = saver._do_save_impl(
-        **_base_kwargs(image_path, layer, output_folder=output_folder)
-    )
-    assert not result, "Should return False when derive_label is unavailable"

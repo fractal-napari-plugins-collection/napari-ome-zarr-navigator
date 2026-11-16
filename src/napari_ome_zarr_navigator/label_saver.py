@@ -15,15 +15,8 @@ from magicgui.widgets import (
 )
 from napari.qt.threading import thread_worker
 from ngio import open_label, open_ome_zarr_container
+from ngio.images import derive_label
 from ngio.utils import StoreOrGroup, fractal_fsspec_store
-
-try:
-    from ngio.images._label import derive_label as _ngio_derive_label
-
-    _NGIO_REMOTE_LABEL_AVAILABLE = True
-except ImportError:
-    _ngio_derive_label = None  # type: ignore[assignment]
-    _NGIO_REMOTE_LABEL_AVAILABLE = False
 
 from napari_ome_zarr_navigator._label_save_utils import (
     _WM_EDIT,
@@ -694,14 +687,6 @@ class LabelSaverImage(Container):
         masking_roi_backend: str,
         plate_translation: tuple = (0.0, 0.0),
     ) -> bool:
-        if not _NGIO_REMOTE_LABEL_AVAILABLE:
-            logger.error(
-                "Remote label save requires ngio.images._label.derive_label "
-                "(private API). This may have changed in your version of ngio "
-                "— please report this issue."
-            )
-            return False
-
         ok, msg = _validate_tz(label_array, axes_str, img)
         if not ok:
             logger.warning("Cannot save label: %s", msg)
@@ -724,7 +709,7 @@ class LabelSaverImage(Container):
         else:
             label_dir = labels_path / label_name
             labels_path.mkdir(parents=True, exist_ok=True)
-            _ngio_derive_label(  # type: ignore[operator]
+            derive_label(
                 store=label_dir,
                 name=label_name,
                 ref_image=img,

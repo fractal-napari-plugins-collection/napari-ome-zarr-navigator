@@ -216,11 +216,15 @@ def _apply_write_region(
 ) -> None:
     """Write label_array into label_obj at the computed region, then consolidate."""
     if write_mode == _WM_EDIT:
+        # Only the edited region changed: rebuild just that part of the pyramid.
+        with label_obj.track_writes() as regions:
+            label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
+        label_obj.consolidate(mode="auto", regions=regions)
+        return
+
+    if is_partial:
+        label_obj.set_array(np.zeros(full_shape, dtype=label_array.dtype))
         label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
     else:
-        if is_partial:
-            label_obj.set_array(np.zeros(full_shape, dtype=label_array.dtype))
-            label_obj.set_array(label_array, y=slice(y0, y1), x=slice(x0, x1))
-        else:
-            label_obj.set_array(label_array)
-    label_obj.consolidate()
+        label_obj.set_array(label_array)
+    label_obj.consolidate(mode="auto")

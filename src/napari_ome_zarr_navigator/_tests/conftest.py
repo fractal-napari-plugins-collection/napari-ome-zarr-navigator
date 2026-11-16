@@ -5,9 +5,12 @@ from pathlib import Path
 import pandas as pd
 import pooch
 import pytest
-from ngio import create_empty_plate, create_synthetic_ome_zarr
-from ngio.hcs._plate import OmeZarrPlate
-from ngio.tables import ConditionTable
+from ngio import (
+    ConditionTable,
+    OmeZarrPlate,
+    create_empty_plate,
+    create_synthetic_ome_zarr,
+)
 
 
 @pytest.fixture(scope="session")

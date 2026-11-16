@@ -203,3 +203,33 @@ def test_roi_table_choices_always_include_sentinel(
     zarr_url = Path(zenodo_zarr[1]) / "B" / "03" / "0"
     roi_loader = _init_roi_loader_image(viewer, zarr_url, qtbot)
     assert roi_loader._roi_table_picker.choices[-1] == _NO_ROI_TABLE
+
+
+def test_refresh_sees_labels_and_tables_written_elsewhere(
+    make_napari_viewer, tmp_path, qtbot
+):
+    """The loader's cache=True container must pick up writes from other handles.
+
+    Label saver and ROI annotator write through their own containers and then
+    call refresh_labels / refresh_roi_tables on the loader.
+    """
+    from ngio import create_synthetic_ome_zarr, open_ome_zarr_container
+
+    zarr_url = tmp_path / "synthetic.zarr"
+    create_synthetic_ome_zarr(str(zarr_url), shape=(1, 64, 64), overwrite=True)
+    viewer = make_napari_viewer()
+    roi_loader = _init_roi_loader_image(viewer, zarr_url, qtbot)
+    assert "new_label" not in roi_loader._label_picker.choices
+
+    writer = open_ome_zarr_container(str(zarr_url), mode="a", cache=False)
+    label = writer.derive_label("new_label")
+    writer.add_table("new_ROI_table", label.build_masking_roi_table())
+
+    roi_loader.refresh_labels()
+    assert "new_label" in roi_loader._label_picker.choices
+
+    with qtbot.waitSignal(
+        roi_loader.image_changed_event.roi_tables_updated, timeout=5000
+    ):
+        roi_loader.refresh_roi_tables()
+    assert "new_ROI_table" in roi_loader._roi_table_picker.choices
