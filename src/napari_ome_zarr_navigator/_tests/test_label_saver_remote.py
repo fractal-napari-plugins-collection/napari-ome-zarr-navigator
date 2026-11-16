@@ -60,6 +60,9 @@ def test_s3_source_is_read_only(make_napari_viewer, monkeypatch):
     monkeypatch.setattr(
         LabelSaverImage, "_load_container_async", lambda self, store: None
     )
+    monkeypatch.setattr(
+        "napari_ome_zarr_navigator.util._has_aws_credentials", lambda: True
+    )
     saver = LabelSaverImage(
         viewer=make_napari_viewer(),
         zarr_url="s3://bucket/image.zarr",

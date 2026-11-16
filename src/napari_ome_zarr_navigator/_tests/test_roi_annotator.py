@@ -392,6 +392,9 @@ def test_roi_annotator_image_s3_source(make_napari_viewer, monkeypatch):
         "napari_ome_zarr_navigator.roi_annotator.open_ome_zarr_container",
         _no_network,
     )
+    monkeypatch.setattr(
+        "napari_ome_zarr_navigator.util._has_aws_credentials", lambda: True
+    )
     viewer = make_napari_viewer()
     annotator = ROIAnnotatorImage(viewer)
 
