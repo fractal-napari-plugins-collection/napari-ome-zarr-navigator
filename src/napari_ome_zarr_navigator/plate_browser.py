@@ -11,7 +11,7 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from ngio import open_ome_zarr_container
+from ngio import NgioError, open_ome_zarr_container
 
 from napari_ome_zarr_navigator.condition_filter import ConditionTableFilter
 from napari_ome_zarr_navigator.plate_manager import PlateManager
@@ -19,7 +19,10 @@ from napari_ome_zarr_navigator.roi_loader import (
     ROILoaderPlate,
     remove_existing_label_layers,
 )
-from napari_ome_zarr_navigator.roi_loading_utils import orchestrate_load_roi
+from napari_ome_zarr_navigator.roi_loading_utils import (
+    orchestrate_load_roi,
+    roi_position_info,
+)
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
     ZarrSelector,
@@ -82,6 +85,8 @@ class PlateBrowser(Container):
         self.default_labels = None
         self.default_features = None
         self.remove_old_labels = False
+        self.default_original_position = False
+        self.default_add_translation = False
         self.default_image_loading_mode = "Multi-resolution (lazy)"
         self.default_label_loading_mode = "Fixed resolution"
         self.default_label_level = "0"
@@ -329,7 +334,33 @@ class PlateBrowser(Container):
                     self.default_label_loading_mode == "Multi-resolution (lazy)"
                 ),
                 label_level=self.default_label_level,
+                **self._default_position_kwargs(ome_zarr_container),
             )
+
+    def _default_position_kwargs(self, ome_zarr_container) -> dict:
+        """ROI position options for one well.
+
+        Each well has its own ROI table, so the minimum original position is
+        taken from that well's table, as in the ROI Loader.
+        """
+        if not (self.default_original_position or self.default_add_translation):
+            return {}
+        try:
+            table = ome_zarr_container.get_generic_roi_table(self.default_roi_table)
+        except NgioError as exc:
+            logger.warning(
+                "Could not read ROI table '%s' for the position options: %s",
+                self.default_roi_table,
+                exc,
+            )
+            return {}
+        info = roi_position_info(table.rois())
+        return {
+            "original_origin": (
+                info.original_origin if self.default_original_position else None
+            ),
+            "add_translation": self.default_add_translation,
+        }
 
     def go_to_well(self):
         wells = get_row_cols(self.well.value)
@@ -406,6 +437,8 @@ class PlateBrowser(Container):
         image_loading_mode="Multi-resolution (lazy)",
         label_loading_mode="Fixed resolution",
         label_level="0",
+        original_position=False,
+        add_translation=False,
     ):
         self.default_zarr_image_subgroup = zarr_image_subgroup
         self.default_roi_table = roi_table
@@ -418,4 +451,6 @@ class PlateBrowser(Container):
         self.default_image_loading_mode = image_loading_mode
         self.default_label_loading_mode = label_loading_mode
         self.default_label_level = label_level
+        self.default_original_position = original_position
+        self.default_add_translation = add_translation
         self.btn_load_default_roi.enabled = True

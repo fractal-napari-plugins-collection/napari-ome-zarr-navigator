@@ -722,3 +722,23 @@ def test_edit_mode_regional_consolidate_matches_full_rebuild(tmp_path):
         got = reopened.get_label("regional", path=path).get_as_numpy()
         expected = reopened.get_label("full", path=path).get_as_numpy()
         np.testing.assert_array_equal(got, expected, err_msg=f"level {path}")
+
+
+def test_label_saver_refuses_shifted_layer(make_napari_viewer, synthetic_image_path):
+    """Layers loaded at their original position / with registration translation
+    don't line up with the image on disk, so saving them must be refused."""
+    from napari_ome_zarr_navigator.roi_loading_utils import POSITION_METADATA_KEY
+
+    viewer = make_napari_viewer()
+    saver = LabelSaverImage(viewer=viewer, zarr_url=synthetic_image_path, source="File")
+    layer = _make_full_label_layer(viewer, synthetic_image_path, name="shifted")
+    layer.metadata[POSITION_METADATA_KEY] = {"original": {"y": -10.0, "x": -20.0}}
+    saver._layer_picker.value = "shifted"
+    saver._label_name.value = "shifted_label"
+    button_text = saver._btn_save.text
+
+    saver._save()
+
+    assert saver._btn_save.text == button_text  # no save was started
+    container = open_ome_zarr_container(synthetic_image_path, mode="r")
+    assert "shifted_label" not in container.list_labels()

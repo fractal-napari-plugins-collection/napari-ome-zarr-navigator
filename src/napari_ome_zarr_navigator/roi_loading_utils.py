@@ -1,6 +1,8 @@
 # Utils for threaded loading of ROIs & adding them to the viewer.
 import logging
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 import napari
 import napari.layers
@@ -36,6 +38,164 @@ def _compute_scale(ngio_img, ndim: int) -> tuple:
         )
 
 
+# ---------------------------------------------------------------------------
+# ROI positioning: original position and registration translation
+# ---------------------------------------------------------------------------
+
+# layer.metadata key marking layers that were not loaded at their regular
+# position. The Label Saver and ROI Annotator refuse such layers, because they
+# derive the on-disk position from the layer's translate.
+POSITION_METADATA_KEY = "navigator_position"
+
+
+@dataclass(frozen=True)
+class RoiPositionInfo:
+    """Optional position columns a ROI table provides (computed once per table).
+
+    Attributes:
+        original_origin: Per-axis minimum of the ``*_micrometer_original``
+            columns over the table (keys "y", "x" and, if present, "z"), or
+            None when the table has no original positions.
+        has_translation: Whether any ROI has ``translation_x/y/z`` columns.
+    """
+
+    original_origin: dict[str, float] | None = None
+    has_translation: bool = False
+
+
+def is_shifted_layer(layer) -> bool:
+    """Whether a layer was loaded at its original position or with translation."""
+    return POSITION_METADATA_KEY in (getattr(layer, "metadata", None) or {})
+
+
+SHIFTED_LAYER_MESSAGE = (
+    "Label layer '%s' was loaded at a shifted position (original position or "
+    "registration translation), so it doesn't line up with the OME-Zarr image. "
+    "Reload the ROI without these ROI Loader options to %s."
+)
+
+
+def _finite_extra(roi, key: str) -> float | None:
+    """Return a finite float from a ROI's extra columns, or None (missing/NaN)."""
+    raw = (roi.model_extra or {}).get(key)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _original_coords(roi) -> dict[str, float] | None:
+    """The ROI's original position in µm, or None without finite x and y."""
+    y = _finite_extra(roi, "y_micrometer_original")
+    x = _finite_extra(roi, "x_micrometer_original")
+    if y is None or x is None:
+        return None
+    coords = {"y": y, "x": x}
+    z = _finite_extra(roi, "z_micrometer_original")
+    if z is not None:
+        coords["z"] = z
+    return coords
+
+
+def _translation_coords(roi) -> dict[str, float] | None:
+    """The ROI's registration translation in µm (missing axes count as 0).
+
+    Returns None when the ROI has none of the translation columns, e.g. in the
+    reference acquisition of a Fractal multiplexing registration.
+    """
+    values = {ax: _finite_extra(roi, f"translation_{ax}") for ax in ("z", "y", "x")}
+    if all(v is None for v in values.values()):
+        return None
+    return {ax: v if v is not None else 0.0 for ax, v in values.items()}
+
+
+def roi_position_info(rois: Iterable) -> RoiPositionInfo:
+    """Summarise which optional position columns a ROI table's ROIs carry."""
+    rois = list(rois)
+    originals = [c for roi in rois if (c := _original_coords(roi)) is not None]
+    origin = None
+    if originals:
+        origin = {ax: min(c[ax] for c in originals) for ax in ("y", "x")}
+        z_values = [c["z"] for c in originals if "z" in c]
+        if z_values:
+            origin["z"] = min(z_values)
+    has_translation = any(_translation_coords(roi) is not None for roi in rois)
+    return RoiPositionInfo(original_origin=origin, has_translation=has_translation)
+
+
+def _roi_translate(
+    roi,
+    translation: tuple[float, float],
+    *,
+    origin: dict[str, float] | None = None,
+    add_translation: bool = False,
+    ndim: int = 2,
+    has_z_axis: bool = False,
+) -> tuple[tuple[float, ...], dict | None]:
+    """Compute the napari ``translate`` for a loaded ROI.
+
+    Position = ``translation`` (well offset in plate mode) + base + optional
+    registration translation, where base is the ROI start, or, when ``origin``
+    is given, the ROI's original position relative to the table minimum. A ROI
+    without original coordinates keeps its regular base.
+
+    Returns:
+        The translate tuple (y, x), or with a leading z term (padded to
+        ``ndim``) when the data has a z axis and the z offset is non-zero, and a
+        tag dict ``{"original": ..., "translation": ...}`` with the values used,
+        or None when the ROI is at its regular position.
+    """
+    tag: dict[str, dict[str, float]] = {}
+    original = _original_coords(roi) if origin is not None else None
+    if origin is not None and original is not None:
+        y = original["y"] - origin["y"]
+        x = original["x"] - origin["x"]
+        z = original["z"] - origin["z"] if "z" in original and "z" in origin else 0.0
+        tag["original"] = original
+    else:
+        y, x, z = roi["y"].start, roi["x"].start, 0.0
+    if add_translation:
+        shift = _translation_coords(roi)
+        if shift is not None:
+            y, x, z = y + shift["y"], x + shift["x"], z + shift["z"]
+            tag["translation"] = shift
+    yx = (translation[0] + y, translation[1] + x)
+    if has_z_axis and z != 0.0:
+        return (0.0,) * (ndim - 3) + (z,) + yx, (tag or None)
+    return yx, (tag or None)
+
+
+def _layer_translate(
+    ome_zarr_container: ngio.OmeZarrContainer,
+    roi,
+    translation: tuple[float, float],
+    ndim: int,
+    original_origin: dict[str, float] | None,
+    add_translation: bool,
+) -> tuple[tuple[float, ...], dict | None]:
+    """``_roi_translate`` for loaded data of dimensionality ``ndim``.
+
+    ``roi`` is None for whole-image loading, which ignores the position options.
+    """
+    if roi is None:
+        return tuple(translation), None
+    # A z axis survives .squeeze() for zyx (3D) and tzyx (4D) data.
+    has_z_axis = ome_zarr_container.is_3d and (
+        ndim == 4 or (ndim == 3 and not ome_zarr_container.is_time_series)
+    )
+    return _roi_translate(
+        roi,
+        translation,
+        origin=original_origin,
+        add_translation=add_translation,
+        ndim=ndim,
+        has_z_axis=has_z_axis,
+    )
+
+
 @thread_worker
 def fetch_single_image(
     ome_zarr_container: ngio.OmeZarrContainer,
@@ -47,30 +207,29 @@ def fetch_single_image(
     translation: tuple[int, int],
     multiscale: bool = False,
     whole_image: bool = False,
+    original_origin: dict[str, float] | None = None,
+    add_translation: bool = False,
 ):
     """Load exactly one channel and return kwargs for viewer.add_image.
 
     When whole_image=True, loads the full image array (no ROI cropping).
     When multiscale=True, returns a list of dask arrays (finest→coarsest) for
     napari's multiscale rendering. When False, returns a numpy array at level.
+    ``original_origin`` / ``add_translation`` select the ROI position, see
+    ``_roi_translate``.
     """
-    if whole_image:
-        roi_translation = translation
-    else:
+    curr_roi = None
+    if not whole_image:
         # TODO: Refactor ROI table loading to happen before the parallelized fetch
         ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
         curr_roi = ngio_table.get(roi_name)
-        roi_translation = (
-            translation[0] + curr_roi["y"].start,  # type: ignore[index]
-            translation[1] + curr_roi["x"].start,  # type: ignore[index]
-        )
 
     if multiscale:
         level_paths = ome_zarr_container.level_paths  # ngio order: finest→coarsest
         data = []
         for lv in level_paths:
             ngio_img = ome_zarr_container.get_image(path=lv)
-            if whole_image:
+            if curr_roi is None:
                 arr = ngio_img.get_as_dask(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
             else:
                 arr = ngio_img.get_roi_as_dask(
@@ -83,7 +242,7 @@ def fetch_single_image(
             return None
     else:
         ngio_img = ome_zarr_container.get_image(path=level)
-        if whole_image:
+        if curr_roi is None:
             arr = ngio_img.get_as_numpy(channel_selection=channel).squeeze()  # type: ignore[attr-defined]
         else:
             arr = ngio_img.get_roi_as_numpy(
@@ -93,6 +252,15 @@ def fetch_single_image(
                 return None
         data = arr
         scale = _compute_scale(ngio_img, arr.ndim)
+
+    roi_translation, position_tag = _layer_translate(
+        ome_zarr_container,
+        curr_roi,
+        translation,
+        ndim=len(scale),
+        original_origin=original_origin,
+        add_translation=add_translation,
+    )
 
     # build colormap + contrast_limits
     idx = ome_zarr_container.get_channel_idx(channel_label=channel)
@@ -108,7 +276,7 @@ def fetch_single_image(
     except AttributeError:
         clims = None
 
-    return {
+    layer_kwargs = {
         "data": data,
         "scale": scale,
         "contrast_limits": clims,
@@ -116,6 +284,9 @@ def fetch_single_image(
         "name": f"{layer_base_name}{channel}",
         "translate": roi_translation,
     }
+    if position_tag is not None:
+        layer_kwargs["metadata"] = {POSITION_METADATA_KEY: position_tag}
+    return layer_kwargs
 
 
 @thread_worker
@@ -132,6 +303,8 @@ def fetch_labels_and_features(
     multiscale_labels: bool = False,
     label_level: str = "0",
     whole_image: bool = False,
+    original_origin: dict[str, float] | None = None,
+    add_translation: bool = False,
 ):
     """
     Load all label masks + feature tables for one ROI (or the whole image).
@@ -141,16 +314,13 @@ def fetch_labels_and_features(
     When whole_image=True, loads the full label array without ROI cropping.
     When multiscale_labels=True, label data is a list of dask arrays
     (finest→coarsest). When False, loads a numpy array at label_level.
+    ``original_origin`` / ``add_translation`` select the ROI position, see
+    ``_roi_translate``.
     """
-    if whole_image:
-        roi_translation = translation
-    else:
+    curr_roi = None
+    if not whole_image:
         ngio_table = ome_zarr_container.get_generic_roi_table(roi_table)
         curr_roi = ngio_table.get(roi_name)
-        roi_translation = (
-            translation[0] + curr_roi["y"].start,  # type: ignore[index]
-            translation[1] + curr_roi["x"].start,  # type: ignore[index]
-        )
 
     result = {"labels": [], "features": []}
 
@@ -162,7 +332,7 @@ def fetch_labels_and_features(
             data = []
             for lv in level_paths:
                 ngio_lbl = ome_zarr_container.get_label(name=lbl, path=lv)
-                if whole_image:
+                if curr_roi is None:
                     arr = ngio_lbl.get_as_dask().squeeze()  # type: ignore[attr-defined]
                 else:
                     arr = ngio_lbl.get_roi_as_dask(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
@@ -171,21 +341,30 @@ def fetch_labels_and_features(
             scale = _compute_scale(ngio_lbl0, data[0].ndim)
         else:
             ngio_lbl = ome_zarr_container.get_label(name=lbl, path=label_level)
-            if whole_image:
+            if curr_roi is None:
                 arr = ngio_lbl.get_as_numpy().squeeze()  # type: ignore[attr-defined]
             else:
                 arr = ngio_lbl.get_roi_as_numpy(roi=curr_roi).squeeze()  # type: ignore[attr-defined]
             data = arr
             scale = _compute_scale(ngio_lbl, arr.ndim)
 
-        result["labels"].append(
-            {
-                "data": data,
-                "scale": scale,
-                "name": f"{layer_base_name}{lbl}",
-                "translate": roi_translation,
-            }
+        roi_translation, position_tag = _layer_translate(
+            ome_zarr_container,
+            curr_roi,
+            translation,
+            ndim=len(scale),
+            original_origin=original_origin,
+            add_translation=add_translation,
         )
+        label_kwargs = {
+            "data": data,
+            "scale": scale,
+            "name": f"{layer_base_name}{lbl}",
+            "translate": roi_translation,
+        }
+        if position_tag is not None:
+            label_kwargs["metadata"] = {POSITION_METADATA_KEY: position_tag}
+        result["labels"].append(label_kwargs)
 
     # 2) load features
     for tbl in features:
@@ -304,6 +483,8 @@ def orchestrate_load_roi(
     multiscale_labels: bool = False,
     label_level: str = "0",
     whole_image: bool = False,
+    original_origin: dict[str, float] | None = None,
+    add_translation: bool = False,
 ):
     """
     Load images, labels & tables of a given ROI & add to viewer
@@ -338,6 +519,11 @@ def orchestrate_load_roi(
             False, load labels at `label_level` as a numpy array.
         label_level: Level path for fixed-resolution label loading (e.g. "0").
         whole_image: When True, skip ROI cropping and load the full image/labels.
+        original_origin: When given, place the ROI at its original position
+            (``*_micrometer_original`` columns) relative to this per-axis table
+            minimum, instead of its regular position. See ``roi_position_info``.
+        add_translation: When True, shift the ROI by its registration
+            translation (``translation_x/y/z`` columns).
 
     """
     # 1) disable & show "Loading"
@@ -360,6 +546,20 @@ def orchestrate_load_roi(
         # All workers finished (some may have errored) — apply whatever loaded.
         if results["lbl_feats"] is None:
             results["lbl_feats"] = {"labels": [], "features": []}
+        if original_origin is not None and not whole_image:
+            layer_kwargs = [kw for kw in results["images"] if kw]
+            layer_kwargs += results["lbl_feats"]["labels"]
+            if any(
+                "original"
+                not in ((kw.get("metadata") or {}).get(POSITION_METADATA_KEY) or {})
+                for kw in layer_kwargs
+            ):
+                logger.warning(
+                    "ROI '%s' in '%s' has no x/y_micrometer_original; "
+                    "loaded at its regular position.",
+                    roi_name,
+                    roi_table,
+                )
         apply_roi_data_to_viewer(
             viewer, results, channels, base_name, blending_int, set_state_fn, zarr_id
         )
@@ -387,6 +587,8 @@ def orchestrate_load_roi(
             translation,
             multiscale=multiscale_image,
             whole_image=whole_image,
+            original_origin=original_origin,
+            add_translation=add_translation,
         )
         w.returned.connect(
             lambda img_kw: (results["images"].append(img_kw), worker_done())
@@ -408,6 +610,8 @@ def orchestrate_load_roi(
         multiscale_labels=multiscale_labels,
         label_level=label_level,
         whole_image=whole_image,
+        original_origin=original_origin,
+        add_translation=add_translation,
     )
     w2.returned.connect(
         lambda lf: (results.__setitem__("lbl_feats", lf), worker_done())

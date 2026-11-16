@@ -27,6 +27,10 @@ from ngio.tables import open_tables_container
 from ngio.utils import StoreOrGroup
 from qtpy.QtCore import QTimer  # type: ignore[attr-defined]
 
+from napari_ome_zarr_navigator.roi_loading_utils import (
+    SHIFTED_LAYER_MESSAGE,
+    is_shifted_layer,
+)
 from napari_ome_zarr_navigator.util import (
     ZarrSelector,
     calculate_well_positions,
@@ -297,6 +301,14 @@ class ROIAnnotator(Container):
             logger.warning("Label layer '%s' not found in viewer.", layer_name)
             return
         label_layer = label_layers[0]
+
+        # The ROI offsets are derived from label_layer.translate, which assumes
+        # the regular ROI position.
+        if is_shifted_layer(label_layer):
+            logger.warning(
+                SHIFTED_LAYER_MESSAGE, label_layer.name, "compute masking ROIs from it"
+            )
+            return
 
         # Load highest res label layer in multiscale labels case
         data = (

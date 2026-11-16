@@ -31,6 +31,10 @@ from napari_ome_zarr_navigator._label_save_utils import (
     _validate_scale_matches_existing_label,
     _validate_tz,
 )
+from napari_ome_zarr_navigator.roi_loading_utils import (
+    SHIFTED_LAYER_MESSAGE,
+    is_shifted_layer,
+)
 from napari_ome_zarr_navigator.util import ZarrSelector, access_hint, make_store
 
 logger = logging.getLogger(__name__)
@@ -387,6 +391,12 @@ class LabelSaverImage(Container):
         layer = self._get_selected_layer()
         if layer is None:
             logger.warning("No label layer selected.")
+            return
+
+        # The write region is derived from layer.translate, which assumes the
+        # regular ROI position.
+        if is_shifted_layer(layer):
+            logger.warning(SHIFTED_LAYER_MESSAGE, layer.name, "save it")
             return
 
         store = self._store

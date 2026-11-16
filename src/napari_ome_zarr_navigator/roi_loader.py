@@ -20,8 +20,10 @@ from ngio.utils import (
 
 from napari_ome_zarr_navigator.roi_loading_utils import (
     ROILoaderSignals,
+    RoiPositionInfo,
     orchestrate_load_roi,
     remove_existing_label_layers,
+    roi_position_info,
 )
 from napari_ome_zarr_navigator.util import (
     LoaderButtonController,
@@ -41,6 +43,24 @@ _NO_ROI_NAME = "(whole image)"
 
 _MODE_MULTISCALE = "Multi-resolution (lazy)"
 _MODE_FIXED = "Fixed resolution"
+
+_SHIFTED_LAYER_NOTE = (
+    " Layers loaded this way can't be saved with the Label Saver or used for "
+    "masking ROIs in the ROI Annotator."
+)
+_TOOLTIP_ORIGINAL = (
+    "Place the ROI at its original acquisition position from the ROI table's "
+    "x/y/z_micrometer_original columns (relative to the table's smallest "
+    "original position), e.g. to keep FOV overlaps for stitching." + _SHIFTED_LAYER_NOTE
+)
+_TOOLTIP_TRANSLATION = (
+    "Shift the ROI by the ROI table's translation_x/y/z columns, e.g. to "
+    "overlay a multiplexing acquisition on the reference. Use only when the "
+    "registration was calculated but not yet applied to the images."
+    + _SHIFTED_LAYER_NOTE
+)
+_TOOLTIP_NO_ORIGINAL = "The selected ROI table has no *_micrometer_original columns."
+_TOOLTIP_NO_TRANSLATION = "The selected ROI table has no translation_x/y/z columns."
 
 
 class ROILoader(Container):
@@ -90,6 +110,16 @@ class ROILoader(Container):
         self._remove_old_labels_box = CheckBox(
             value=False, text="Remove existing labels"
         )
+        # ROI position options; enabled per ROI table in _on_rois_fetched
+        self._position_info = RoiPositionInfo()
+        self._original_position_box = CheckBox(
+            value=False, text="Load ROI at original position", enabled=False
+        )
+        self._original_position_box.tooltip = _TOOLTIP_NO_ORIGINAL
+        self._add_translation_box = CheckBox(
+            value=False, text="Add registration translation", enabled=False
+        )
+        self._add_translation_box.tooltip = _TOOLTIP_NO_TRANSLATION
         self._advanced_toggle = PushButton(text="▶ Advanced settings")
         self._advanced_container = Container(
             widgets=[
@@ -98,6 +128,8 @@ class ROILoader(Container):
                 self._label_loading_mode,
                 self._label_level_picker,
                 self._remove_old_labels_box,
+                self._original_position_box,
+                self._add_translation_box,
             ],
         )
         self._advanced_container.visible = False
@@ -275,38 +307,75 @@ class ROILoader(Container):
         self._btn_ctrl.on_step_done()  # step 1 done
 
         if self._roi_table_picker.value == _NO_ROI_TABLE:
-            self._apply_roi_choices_update([_NO_ROI_NAME])
+            self._show_no_rois()
             self._btn_ctrl.on_step_done()  # step 2 done
         else:
             roi_worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
-            roi_worker.returned.connect(self._apply_roi_choices_update)
+            roi_worker.returned.connect(self._on_rois_fetched)
             roi_worker.returned.connect(self._btn_ctrl.on_step_done)  # step 2 done
             roi_worker.start()
 
     @thread_worker
-    def _fetch_rois(self, table_name: str) -> list[str | None]:
-        """Worker that returns the list of ROI names for the given table."""
+    def _fetch_rois(
+        self, table_name: str
+    ) -> tuple[str, list[str | None], RoiPositionInfo]:
+        """Worker returning the ROI names and position columns of a table."""
         if self.ome_zarr_container is not None:
             ngio_table = self.ome_zarr_container.get_generic_roi_table(name=table_name)
-            return [r.name for r in ngio_table.rois()]
+            rois = ngio_table.rois()
+            return table_name, [r.name for r in rois], roi_position_info(rois)
         else:
-            return [""]
+            return table_name, [""], RoiPositionInfo()
+
+    def _on_rois_fetched(
+        self, result: tuple[str, list[str | None], RoiPositionInfo]
+    ) -> None:
+        table_name, roi_list, position_info = result
+        # Workers can finish out of order (e.g. the init fetch for the first
+        # table after the user already picked another one). A stale result would
+        # show the wrong table's ROIs and position info, so drop it.
+        if table_name != self._roi_table_picker.value:
+            return
+        self._set_position_info(position_info)
+        self._apply_roi_choices_update(roi_list)
+
+    def _show_no_rois(self) -> None:
+        """ROI choices and position options for 'no ROI table' / no image."""
+        self._set_position_info(RoiPositionInfo())
+        self._apply_roi_choices_update([_NO_ROI_NAME])
+
+    def _set_position_info(self, info: RoiPositionInfo) -> None:
+        """Enable the ROI position options the selected table supports.
+
+        The boxes keep their checked state while disabled, so switching back to
+        a table with the columns restores the user's choice.
+        """
+        self._position_info = info
+        has_original = info.original_origin is not None
+        self._original_position_box.enabled = has_original
+        self._original_position_box.tooltip = (
+            _TOOLTIP_ORIGINAL if has_original else _TOOLTIP_NO_ORIGINAL
+        )
+        self._add_translation_box.enabled = info.has_translation
+        self._add_translation_box.tooltip = (
+            _TOOLTIP_TRANSLATION if info.has_translation else _TOOLTIP_NO_TRANSLATION
+        )
 
     def update_roi_selection(self):
         """Called when the user picks a new ROI table."""
         if not self.ome_zarr_container:
-            self._apply_roi_choices_update([_NO_ROI_NAME])
+            self._show_no_rois()
             self.state = LoaderState.INITIALIZING
             return
 
         if self._roi_table_picker.value == _NO_ROI_TABLE:
-            self._apply_roi_choices_update([_NO_ROI_NAME])
+            self._show_no_rois()
             self.state = LoaderState.READY
             return
 
         self._btn_ctrl.begin_init(n_steps=1)
         worker = self._fetch_rois(self._roi_table_picker.value)  # type: ignore[call-arg]
-        worker.returned.connect(self._apply_roi_choices_update)
+        worker.returned.connect(self._on_rois_fetched)
         worker.returned.connect(self._btn_ctrl.on_step_done)
         worker.start()
 
@@ -528,6 +597,12 @@ class ROILoader(Container):
             multiscale_labels=multiscale_labels,
             label_level=label_level,  # type: ignore[arg-type]
             whole_image=whole_image,
+            original_origin=self._position_info.original_origin
+            if self._original_position_box.enabled and self._original_position_box.value
+            else None,
+            add_translation=bool(
+                self._add_translation_box.enabled and self._add_translation_box.value
+            ),
         )
 
 
@@ -818,4 +893,11 @@ class ROILoaderPlate(ROILoader):
             image_loading_mode=self._image_loading_mode.value,
             label_loading_mode=self._label_loading_mode.value,
             label_level=label_level,
+            original_position=bool(
+                self._original_position_box.enabled
+                and self._original_position_box.value
+            ),
+            add_translation=bool(
+                self._add_translation_box.enabled and self._add_translation_box.value
+            ),
         )
